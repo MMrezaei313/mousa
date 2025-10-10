@@ -1,0 +1,213 @@
+"""
+مبدل‌های داده
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
+
+class DataConverter:
+    """مبدل داده‌های بازار"""
+    
+    def __init__(self):
+        self.supported_timeframes = ['1m', '5m', '15m', '1h', '4h', '1d', '1w']
+    
+    def resample_data(self, data: pd.DataFrame, 
+                     from_timeframe: str, 
+                     to_timeframe: str) -> pd.DataFrame:
+        """تغییر تایم‌فریم داده‌ها"""
+        try:
+            if from_timeframe == to_timeframe:
+                return data.copy()
+            
+            # محاسبه ضریب تبدیل
+            conversion_ratio = self._get_conversion_ratio(from_timeframe, to_timeframe)
+            if conversion_ratio <= 1:
+                logger.warning(f"تبدیل از {from_timeframe} به {to_timeframe} امکان‌پذیر نیست")
+                return data.copy()
+            
+            # رسمپل کردن داده‌ها
+            rule = self._get_resample_rule(to_timeframe)
+            resampled = data.resample(rule).agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum'
+            }).dropna()
+            
+            logger.info(f"تبدیل تایم‌فریم از {from_timeframe} به {to_timeframe}: {len(data)} -> {len(resampled)}")
+            return resampled
+            
+        except Exception as e:
+            logger.error(f"خطا در تغییر تایم‌فریم: {e}")
+            return data.copy()
+    
+    def convert_ohlc_format(self, data: pd.DataFrame, 
+                          source_format: str, 
+                          target_format: str) -> pd.DataFrame:
+        """تبدیل فرمت OHLC"""
+        try:
+            converted_data = data.copy()
+            
+            if source_format == "CCXT" and target_format == "PANDAS":
+                # تبدیل از فرمت CCXT به Pandas
+                if 'timestamp' in converted_data.columns:
+                    converted_data['timestamp'] = pd.to_datetime(converted_data['timestamp'], unit='ms')
+                    converted_data.set_index('timestamp', inplace=True)
+                
+                # استانداردسازی نام ستون‌ها
+                column_mapping = {
+                    'open': 'open',
+                    'high': 'high', 
+                    'low': 'low',
+                    'close': 'close',
+                    'volume': 'volume'
+                }
+                
+                converted_data.rename(columns=column_mapping, inplace=True)
+                
+            elif source_format == "PANDAS" and target_format == "CCXT":
+                # تبدیل از Pandas به CCXT
+                converted_data.reset_index(inplace=True)
+                if 'timestamp' in converted_data.columns:
+                    converted_data['timestamp'] = converted_data['timestamp'].astype(np.int64) // 10**6
+            
+            logger.info(f"تبدیل فرمت از {source_format} به {target_format}")
+            return converted_data
+            
+        except Exception as e:
+            logger.error(f"خطا در تبدیل فرمت: {e}")
+            return data.copy()
+    
+    def fill_missing_data(self, data: pd.DataFrame, 
+                         method: str = "linear") -> pd.DataFrame:
+        """پر کردن داده‌های缺失"""
+        try:
+            filled_data = data.copy()
+            
+            if method == "linear":
+                filled_data = filled_data.interpolate(method='linear')
+            elif method == "forward":
+                filled_data = filled_data.ffill()
+            elif method == "backward":
+                filled_data = filled_data.bfill()
+            elif method == "spline":
+                filled_data = filled_data.interpolate(method='spline', order=3)
+            
+            # پر کردن مقادیر باقی‌مانده
+            filled_data = filled_data.fillna(method='ffill').fillna(method='bfill')
+            
+            missing_count = data.isnull().sum().sum()
+            filled_count = filled_data.isnull().sum().sum()
+            
+            logger.info(f"پر کردن {missing_count - filled_count} داده缺失")
+            return filled_data
+            
+        except Exception as e:
+            logger.error(f"خطا در پر کردن داده‌های缺失: {e}")
+            return data.copy()
+    
+    def detect_anomalies(self, data: pd.DataFrame) -> pd.DataFrame:
+        """تشخیص داده‌های anomalous"""
+        try:
+            anomalies = pd.DataFrame()
+            
+            # بررسی قیمت‌های غیرعادی
+            price_columns = ['open', 'high', 'low', 'close']
+            for col in price_columns:
+                z_scores = np.abs((data[col] - data[col].mean()) / data[col].std())
+                col_anomalies = data[z_scores > 3]  # بیش از 3 انحراف معیار
+                anomalies = pd.concat([anomalies, col_anomalies])
+            
+            # بررسی حجم غیرعادی
+            volume_z = np.abs((data['volume'] - data['volume'].mean()) / data['volume'].std())
+            volume_anomalies = data[volume_z > 5]  # بیش از 5 انحراف معیار برای حجم
+            anomalies = pd.concat([anomalies, volume_anomalies])
+            
+            # حذف duplicateها
+            anomalies = anomalies[~anomalies.index.duplicated(keep='first')]
+            
+            logger.info(f"تشخیص {len(anomalies)} داده anomalous")
+            return anomalies
+            
+        except Exception as e:
+            logger.error(f"خطا در تشخیص داده‌های anomalous: {e}")
+            return pd.DataFrame()
+    
+    def clean_anomalies(self, data: pd.DataFrame, 
+                       anomalies: pd.DataFrame) -> pd.DataFrame:
+        """پاکسازی داده‌های anomalous"""
+        try:
+            cleaned_data = data.copy()
+            
+            # جایگزینی داده‌های anomalous با مقادیر معقول
+            for idx in anomalies.index:
+                if idx in cleaned_data.index:
+                    # پیدا کردن کندل‌های مجاور
+                    prev_idx = cleaned_data.index.get_loc(idx) - 1
+                    next_idx = cleaned_data.index.get_loc(idx) + 1
+                    
+                    if prev_idx >= 0 and next_idx < len(cleaned_data):
+                        prev_candle = cleaned_data.iloc[prev_idx]
+                        next_candle = cleaned_data.iloc[next_idx]
+                        
+                        # جایگزینی با میانگین کندل‌های مجاور
+                        cleaned_data.loc[idx, 'open'] = (prev_candle['close'] + next_candle['open']) / 2
+                        cleaned_data.loc[idx, 'high'] = max(prev_candle['high'], next_candle['high'])
+                        cleaned_data.loc[idx, 'low'] = min(prev_candle['low'], next_candle['low'])
+                        cleaned_data.loc[idx, 'close'] = (prev_candle['close'] + next_candle['close']) / 2
+                        cleaned_data.loc[idx, 'volume'] = (prev_candle['volume'] + next_candle['volume']) / 2
+            
+            logger.info(f"پاکسازی {len(anomalies)} داده anomalous")
+            return cleaned_data
+            
+        except Exception as e:
+            logger.error(f"خطا در پاکسازی داده‌های anomalous: {e}")
+            return data.copy()
+    
+    def calculate_returns(self, data: pd.DataFrame, 
+                         method: str = "log") -> pd.Series:
+        """محاسبه بازدهی"""
+        try:
+            if method == "log":
+                returns = np.log(data['close'] / data['close'].shift(1))
+            else:  # simple returns
+                returns = data['close'].pct_change()
+            
+            returns = returns.dropna()
+            return returns
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه بازدهی: {e}")
+            return pd.Series()
+    
+    def _get_conversion_ratio(self, from_tf: str, to_tf: str) -> int:
+        """محاسبه ضریب تبدیل تایم‌فریم"""
+        tf_minutes = {
+            '1m': 1, '5m': 5, '15m': 15, '1h': 60,
+            '4h': 240, '1d': 1440, '1w': 10080
+        }
+        
+        from_minutes = tf_minutes.get(from_tf, 1)
+        to_minutes = tf_minutes.get(to_tf, 1)
+        
+        return to_minutes // from_minutes
+    
+    def _get_resample_rule(self, timeframe: str) -> str:
+        """دریافت قانون resample"""
+        rules = {
+            '1m': '1T',
+            '5m': '5T', 
+            '15m': '15T',
+            '1h': '1H',
+            '4h': '4H',
+            '1d': '1D',
+            '1w': '1W'
+        }
+        
+        return rules.get(timeframe, '1H')
