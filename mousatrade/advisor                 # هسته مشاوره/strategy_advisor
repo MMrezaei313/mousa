@@ -1,1 +1,320 @@
 
+"""
+مشاور استراتژی MousaTrade
+پیشنهاد استراتژی‌های معاملاتی بر اساس شرایط بازار
+"""
+
+from typing import Dict, List, Optional
+from enum import Enum
+import logging
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+class StrategyType(Enum):
+    TREND_FOLLOWING = "TREND_FOLLOWING"
+    MEAN_REVERSION = "MEAN_REVERSION"
+    BREAKOUT = "BREAKOUT"
+    SCALPING = "SCALPING"
+    SWING_TRADING = "SWING_TRADING"
+
+class MarketRegime(Enum):
+    TRENDING = "TRENDING"
+    RANGING = "RANGING"
+    VOLATILE = "VOLATILE"
+    LOW_VOLATILITY = "LOW_VOLATILITY"
+
+@dataclass
+class StrategyAdvice:
+    symbol: str
+    strategy_type: StrategyType
+    market_regime: MarketRegime
+    confidence: float
+    parameters: Dict
+    description: str
+    risk_level: str
+    timeframe: str
+
+class StrategyAdvisor:
+    """مشاور استراتژی‌های معاملاتی"""
+    
+    def __init__(self):
+        self.strategy_configs = {
+            StrategyType.TREND_FOLLOWING: {
+                "description": "معامله در جهت روند اصلی",
+                "suitable_for": ["TRENDING"],
+                "timeframes": ["4h", "1d"],
+                "risk": "MEDIUM"
+            },
+            StrategyType.MEAN_REVERSION: {
+                "description": "معامله بر اساس بازگشت به میانگین",
+                "suitable_for": ["RANGING"],
+                "timeframes": ["1h", "4h"],
+                "risk": "HIGH"
+            },
+            StrategyType.BREAKOUT: {
+                "description": "معامله در زمان شکست سطوح",
+                "suitable_for": ["RANGING", "LOW_VOLATILITY"],
+                "timeframes": ["1h", "4h"],
+                "risk": "HIGH"
+            },
+            StrategyType.SCALPING: {
+                "description": "معاملات کوتاه‌مدت با سودهای کوچک",
+                "suitable_for": ["VOLATILE"],
+                "timeframes": ["1m", "5m"],
+                "risk": "VERY_HIGH"
+            },
+            StrategyType.SWING_TRADING: {
+                "description": "معاملات چندروزه بر اساس نوسانات",
+                "suitable_for": ["TRENDING", "RANGING"],
+                "timeframes": ["4h", "1d"],
+                "risk": "MEDIUM"
+            }
+        }
+    
+    def get_strategy_recommendation(self, symbol: str, technical_analysis: Dict,
+                                  position_advice: Dict) -> StrategyAdvice:
+        """دریافت پیشنهاد استراتژی"""
+        try:
+            # تشخیص رژیم بازار
+            market_regime = self._detect_market_regime(technical_analysis)
+            
+            # انتخاب استراتژی مناسب
+            strategy_type = self._select_strategy(market_regime, technical_analysis)
+            
+            # تنظیم پارامترهای استراتژی
+            strategy_params = self._get_strategy_parameters(strategy_type, technical_analysis)
+            
+            # محاسبه اطمینان
+            confidence = self._calculate_strategy_confidence(strategy_type, market_regime, technical_analysis)
+            
+            # ایجاد پیشنهاد استراتژی
+            advice = StrategyAdvice(
+                symbol=symbol,
+                strategy_type=strategy_type,
+                market_regime=market_regime,
+                confidence=confidence,
+                parameters=strategy_params,
+                description=self.strategy_configs[strategy_type]["description"],
+                risk_level=self.strategy_configs[strategy_type]["risk"],
+                timeframe=self._get_recommended_timeframe(strategy_type)
+            )
+            
+            logger.info(f"🎯 پیشنهاد استراتژی برای {symbol}: {strategy_type.value}")
+            
+            return advice
+            
+        except Exception as e:
+            logger.error(f"❌ خطا در تولید پیشنهاد استراتژی: {e}")
+            return self._get_default_strategy(symbol)
+    
+    def _detect_market_regime(self, technical_analysis: Dict) -> MarketRegime:
+        """تشخیص رژیم بازار"""
+        try:
+            trend = technical_analysis.get('trend', {})
+            volatility = technical_analysis.get('volatility', {})
+            
+            trend_strength = trend.get('strength', 0.5)
+            daily_volatility = volatility.get('daily_volatility', 0.02)
+            volatility_regime = volatility.get('volatility_regime', 'پایین')
+            
+            # تشخیص بر اساس قدرت روند و نوسان
+            if trend_strength > 0.7:
+                return MarketRegime.TRENDING
+            elif volatility_regime == 'بالا' or daily_volatility > 0.04:
+                return MarketRegime.VOLATILE
+            elif trend_strength < 0.3:
+                return MarketRegime.RANGING
+            else:
+                return MarketRegime.LOW_VOLATILITY
+                
+        except Exception as e:
+            logger.warning(f"خطا در تشخیص رژیم بازار: {e}")
+            return MarketRegime.RANGING
+    
+    def _select_strategy(self, market_regime: MarketRegime, 
+                        technical_analysis: Dict) -> StrategyType:
+        """انتخاب استراتژی مناسب"""
+        
+        # استراتژی‌های مناسب برای هر رژیم
+        regime_strategies = {
+            MarketRegime.TRENDING: [StrategyType.TREND_FOLLOWING, StrategyType.SWING_TRADING],
+            MarketRegime.RANGING: [StrategyType.MEAN_REVERSION, StrategyType.BREAKOUT],
+            MarketRegime.VOLATILE: [StrategyType.SCALPING, StrategyType.BREAKOUT],
+            MarketRegime.LOW_VOLATILITY: [StrategyType.BREAKOUT, StrategyType.SWING_TRADING]
+        }
+        
+        # انتخاب بهترین استراتژی بر اساس شرایط تکنیکال
+        suitable_strategies = regime_strategies.get(market_regime, [StrategyType.SWING_TRADING])
+        
+        # اولویت‌بندی بر اساس تحلیل تکنیکال
+        if market_regime == MarketRegime.TRENDING:
+            return StrategyType.TREND_FOLLOWING
+        elif market_regime == MarketRegime.RANGING:
+            # اگر بازار در محدوده مشخصی نوسان می‌کند
+            support_resistance = technical_analysis.get('support_resistance', {})
+            if (support_resistance.get('nearest_support') and 
+                support_resistance.get('nearest_resistance')):
+                return StrategyType.MEAN_REVERSION
+            else:
+                return StrategyType.BREAKOUT
+        elif market_regime == MarketRegime.VOLATILE:
+            return StrategyType.SCALPING
+        else:
+            return StrategyType.BREAKOUT
+    
+    def _get_strategy_parameters(self, strategy_type: StrategyType,
+                               technical_analysis: Dict) -> Dict:
+        """تنظیم پارامترهای استراتژی"""
+        
+        base_params = {
+            "trailing_stop": False,
+            "pyramid": False,
+            "max_positions": 1
+        }
+        
+        if strategy_type == StrategyType.TREND_FOLLOWING:
+            params = {
+                **base_params,
+                "entry_on_pullback": True,
+                "use_moving_averages": True,
+                "trend_confirmation_period": 20,
+                "stop_loss_type": "atr",  # based on ATR
+                "take_profit_ratio": 2.0  # 2:1 risk reward
+            }
+            
+        elif strategy_type == StrategyType.MEAN_REVERSION:
+            params = {
+                **base_params,
+                "oversold_threshold": 30,  # RSI
+                "overbought_threshold": 70,  # RSI
+                "bollinger_bands_period": 20,
+                "mean_reversion_period": 14,
+                "stop_loss_type": "percentage",
+                "stop_loss_percentage": 0.03  # 3%
+            }
+            
+        elif strategy_type == StrategyType.BREAKOUT:
+            params = {
+                **base_params,
+                "breakout_confirmation": True,
+                "consolidation_period": 10,
+                "volume_confirmation": True,
+                "false_breakout_protection": True,
+                "breakout_retest_entry": True
+            }
+            
+        elif strategy_type == StrategyType.SCALPING:
+            params = {
+                **base_params,
+                "quick_exit": True,
+                "small_timeframe": "1m",
+                "profit_target": 0.005,  # 0.5%
+                "max_holding_time": 300,  # 5 minutes
+                "use_tight_stops": True
+            }
+            
+        else:  # SWING_TRADING
+            params = {
+                **base_params,
+                "swing_identification": True,
+                "fibonacci_retracement": True,
+                "multiple_timeframe_analysis": True,
+                "position_holding_period": "2-5 days",
+                "risk_reward_minimum": 1.5
+            }
+        
+        return params
+    
+    def _calculate_strategy_confidence(self, strategy_type: StrategyType,
+                                    market_regime: MarketRegime,
+                                    technical_analysis: Dict) -> float:
+        """محاسبه اطمینان از استراتژی"""
+        
+        base_confidence = 0.7
+        
+        # تعدیل بر اساس تطابق استراتژی با رژیم بازار
+        regime_match = {
+            StrategyType.TREND_FOLLOWING: 1.0 if market_regime == MarketRegime.TRENDING else 0.6,
+            StrategyType.MEAN_REVERSION: 1.0 if market_regime == MarketRegime.RANGING else 0.5,
+            StrategyType.BREAKOUT: 0.8 if market_regime in [MarketRegime.RANGING, MarketRegime.LOW_VOLATILITY] else 0.6,
+            StrategyType.SCALPING: 1.0 if market_regime == MarketRegime.VOLATILE else 0.4,
+            StrategyType.SWING_TRADING: 0.8  # همه‌کاره
+        }
+        
+        regime_factor = regime_match.get(strategy_type, 0.7)
+        
+        # تعدیل بر اساس قدرت سیگنال‌های تکنیکال
+        technical_confidence = technical_analysis.get('summary', {}).get('confidence', 0.5)
+        
+        # محاسبه نهایی
+        final_confidence = base_confidence * regime_factor * technical_confidence
+        
+        return round(min(final_confidence, 0.95), 2)
+    
+    def _get_recommended_timeframe(self, strategy_type: StrategyType) -> str:
+        """دریافت تایم‌فریم پیشنهادی"""
+        timeframe_map = {
+            StrategyType.TREND_FOLLOWING: "4h",
+            StrategyType.MEAN_REVERSION: "1h",
+            StrategyType.BREAKOUT: "1h",
+            StrategyType.SCALPING: "5m",
+            StrategyType.SWING_TRADING: "4h"
+        }
+        return timeframe_map.get(strategy_type, "1h")
+    
+    def get_strategy_performance_metrics(self, strategy_type: StrategyType) -> Dict:
+        """دریافت معیارهای عملکرد استراتژی"""
+        # داده‌های تاریخی عملکرد (شبیه‌سازی)
+        performance_data = {
+            StrategyType.TREND_FOLLOWING: {
+                "win_rate": 0.65,
+                "avg_profit": 0.15,
+                "avg_loss": -0.08,
+                "profit_factor": 1.8,
+                "max_drawdown": -0.12
+            },
+            StrategyType.MEAN_REVERSION: {
+                "win_rate": 0.55,
+                "avg_profit": 0.08,
+                "avg_loss": -0.12,
+                "profit_factor": 1.2,
+                "max_drawdown": -0.18
+            },
+            StrategyType.BREAKOUT: {
+                "win_rate": 0.45,
+                "avg_profit": 0.25,
+                "avg_loss": -0.10,
+                "profit_factor": 2.0,
+                "max_drawdown": -0.15
+            },
+            StrategyType.SCALPING: {
+                "win_rate": 0.75,
+                "avg_profit": 0.03,
+                "avg_loss": -0.02,
+                "profit_factor": 2.5,
+                "max_drawdown": -0.08
+            },
+            StrategyType.SWING_TRADING: {
+                "win_rate": 0.60,
+                "avg_profit": 0.12,
+                "avg_loss": -0.07,
+                "profit_factor": 1.6,
+                "max_drawdown": -0.10
+            }
+        }
+        
+        return performance_data.get(strategy_type, {})
+    
+    def _get_default_strategy(self, symbol: str) -> StrategyAdvice:
+        """استراتژی پیش‌فرض در صورت خطا"""
+        return StrategyAdvice(
+            symbol=symbol,
+            strategy_type=StrategyType.SWING_TRADING,
+            market_regime=MarketRegime.RANGING,
+            confidence=0.5,
+            parameters={},
+            description="استراتژی همه‌کاره برای شرایط مختلف بازار",
+            risk_level="MEDIUM",
+            timeframe="4h"
+        )
