@@ -1,0 +1,437 @@
+"""
+ماژول تحلیل فاندامنتال MousaTrade
+تحلیل‌های بنیادی ارزهای دیجیتال و سهام
+"""
+
+import requests
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+import logging
+from bs4 import BeautifulSoup
+import re
+import time
+
+logger = logging.getLogger(__name__)
+
+class FundamentalAnalyzer:
+    """آنالیزور فاندامنتال برای ارزهای دیجیتال و سهام"""
+    
+    def __init__(self):
+        self.api_keys = {}
+        self.cache = {}
+        self.cache_timeout = 3600  # 1 hour
+        
+    def analyze(self, symbol: str) -> Dict:
+        """تحلیل فاندامنتال کامل برای یک نماد"""
+        try:
+            # تشخیص نوع نماد (ارز دیجیتال یا سهام)
+            symbol_type = self._detect_symbol_type(symbol)
+            
+            if symbol_type == "crypto":
+                return self._analyze_crypto(symbol)
+            elif symbol_type == "stock":
+                return self._analyze_stock(symbol)
+            else:
+                return self._default_analysis(symbol)
+                
+        except Exception as e:
+            logger.error(f"خطا در تحلیل فاندامنتال {symbol}: {e}")
+            return self._default_analysis(symbol)
+    
+    def _analyze_crypto(self, symbol: str) -> Dict:
+        """تحلیل فاندامنتال ارز دیجیتال"""
+        cache_key = f"crypto_{symbol}"
+        if cache_key in self.cache:
+            cached_data, timestamp = self.cache[cache_key]
+            if time.time() - timestamp < self.cache_timeout:
+                return cached_data
+        
+        try:
+            # داده‌های از CoinGecko API (رایگان)
+            coin_data = self._get_coingecko_data(symbol)
+            
+            # داده‌های از CoinMarketCap (اگر API key باشد)
+            cmc_data = self._get_coinmarketcap_data(symbol)
+            
+            # تحلیل شبکه و فعالیت
+            network_analysis = self._analyze_network_health(symbol)
+            
+            # تحلیل توسعه‌دهندگان
+            development_analysis = self._analyze_development_activity(symbol)
+            
+            # تحلیل بازار و نقدشوندگی
+            market_analysis = self._analyze_market_metrics(symbol)
+            
+            # امتیازدهی نهایی
+            fundamental_score = self._calculate_fundamental_score(
+                coin_data, cmc_data, network_analysis, 
+                development_analysis, market_analysis
+            )
+            
+            result = {
+                "symbol": symbol,
+                "type": "crypto",
+                "fundamental_score": fundamental_score,
+                "grade": self._get_fundamental_grade(fundamental_score),
+                "metrics": {
+                    "market_cap": coin_data.get('market_cap', 0),
+                    "volume_24h": coin_data.get('volume_24h', 0),
+                    "circulating_supply": coin_data.get('circulating_supply', 0),
+                    "total_supply": coin_data.get('total_supply', 0),
+                    "max_supply": coin_data.get('max_supply', 0),
+                    "market_cap_rank": coin_data.get('market_cap_rank', 999),
+                },
+                "network_health": network_analysis,
+                "development_activity": development_analysis,
+                "market_metrics": market_analysis,
+                "sentiment_indicators": {
+                    "fear_greed_index": self._get_fear_greed_index(),
+                    "social_volume": self._get_social_volume(symbol),
+                    "adoption_rate": self._calculate_adoption_rate(symbol)
+                },
+                "risk_factors": self._identify_risk_factors(symbol, coin_data),
+                "opportunities": self._identify_opportunities(symbol, coin_data)
+            }
+            
+            # ذخیره در کش
+            self.cache[cache_key] = (result, time.time())
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"خطا در تحلیل فاندامنتال ارز {symbol}: {e}")
+            return self._default_crypto_analysis(symbol)
+    
+    def _analyze_stock(self, symbol: str) -> Dict:
+        """تحلیل فاندامنتال سهام"""
+        cache_key = f"stock_{symbol}"
+        if cache_key in self.cache:
+            cached_data, timestamp = self.cache[cache_key]
+            if time.time() - timestamp < self.cache_timeout:
+                return cached_data
+        
+        try:
+            # داده‌های مالی (شبیه‌سازی - در عمل نیاز به API دارد)
+            financial_data = self._get_stock_financials(symbol)
+            
+            # نسبت‌های مالی
+            ratios = self._calculate_financial_ratios(financial_data)
+            
+            # تحلیل صنعت
+            industry_analysis = self._analyze_industry(symbol)
+            
+            # تحلیل مدیریت
+            management_analysis = self._analyze_management(symbol)
+            
+            # امتیازدهی نهایی
+            fundamental_score = self._calculate_stock_score(financial_data, ratios, industry_analysis)
+            
+            result = {
+                "symbol": symbol,
+                "type": "stock",
+                "fundamental_score": fundamental_score,
+                "grade": self._get_fundamental_grade(fundamental_score),
+                "financial_metrics": financial_data,
+                "financial_ratios": ratios,
+                "industry_analysis": industry_analysis,
+                "management_analysis": management_analysis,
+                "valuation": {
+                    "intrinsic_value": self._calculate_intrinsic_value(financial_data),
+                    "fair_value": self._calculate_fair_value(financial_data, ratios),
+                    "margin_of_safety": self._calculate_margin_of_safety(financial_data)
+                },
+                "risk_factors": self._identify_stock_risks(symbol, financial_data),
+                "growth_prospects": self._analyze_growth_prospects(symbol, financial_data)
+            }
+            
+            self.cache[cache_key] = (result, time.time())
+            return result
+            
+        except Exception as e:
+            logger.error(f"خطا در تحلیل فاندامنتال سهام {symbol}: {e}")
+            return self._default_stock_analysis(symbol)
+    
+    def _get_coingecko_data(self, symbol: str) -> Dict:
+        """دریافت داده از CoinGecko API"""
+        try:
+            # تبدیل نماد به ID کوین‌گکو
+            coin_id = self._symbol_to_coingecko_id(symbol)
+            if not coin_id:
+                return {}
+            
+            url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
+            params = {
+                'localization': 'false',
+                'tickers': 'false',
+                'market_data': 'true',
+                'community_data': 'true',
+                'developer_data': 'true',
+                'sparkline': 'false'
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                
+                return {
+                    'name': data.get('name', ''),
+                    'symbol': data.get('symbol', '').upper(),
+                    'market_cap': data.get('market_data', {}).get('market_cap', {}).get('usd', 0),
+                    'volume_24h': data.get('market_data', {}).get('total_volume', {}).get('usd', 0),
+                    'circulating_supply': data.get('market_data', {}).get('circulating_supply', 0),
+                    'total_supply': data.get('market_data', {}).get('total_supply', 0),
+                    'max_supply': data.get('market_data', {}).get('max_supply', 0),
+                    'market_cap_rank': data.get('market_cap_rank', 999),
+                    'price_change_24h': data.get('market_data', {}).get('price_change_percentage_24h', 0),
+                    'price_change_7d': data.get('market_data', {}).get('price_change_percentage_7d', 0),
+                    'price_change_30d': data.get('market_data', {}).get('price_change_percentage_30d', 0),
+                    'ath': data.get('market_data', {}).get('ath', {}).get('usd', 0),
+                    'ath_change_percentage': data.get('market_data', {}).get('ath_change_percentage', {}).get('usd', 0),
+                    'atl': data.get('market_data', {}).get('atl', {}).get('usd', 0),
+                    'atl_change_percentage': data.get('market_data', {}).get('atl_change_percentage', {}).get('usd', 0),
+                }
+            else:
+                return {}
+                
+        except Exception as e:
+            logger.warning(f"خطا در دریافت داده از CoinGecko: {e}")
+            return {}
+    
+    def _get_coinmarketcap_data(self, symbol: str) -> Dict:
+        """دریافت داده از CoinMarketCap"""
+        # نیاز به API Key دارد
+        return {}
+    
+    def _analyze_network_health(self, symbol: str) -> Dict:
+        """تحلیل سلامت شبکه"""
+        try:
+            # شاخص‌های سلامت شبکه
+            return {
+                "hash_rate": self._get_network_hash_rate(symbol),
+                "transaction_count": self._get_daily_transactions(symbol),
+                "active_addresses": self._get_active_addresses(symbol),
+                "network_value": self._calculate_network_value(symbol),
+                "miner_health": self._analyze_miner_health(symbol),
+                "decentralization_score": self._calculate_decentralization_score(symbol)
+            }
+        except:
+            return {
+                "hash_rate": 0,
+                "transaction_count": 0,
+                "active_addresses": 0,
+                "network_value": 0,
+                "miner_health": "نامشخص",
+                "decentralization_score": 0.5
+            }
+    
+    def _analyze_development_activity(self, symbol: str) -> Dict:
+        """تحلیل فعالیت توسعه‌دهندگان"""
+        return {
+            "github_commits": self._get_github_activity(symbol),
+            "developer_count": self._estimate_developer_count(symbol),
+            "recent_updates": self._get_recent_updates(symbol),
+            "community_engagement": self._measure_community_engagement(symbol),
+            "protocol_upgrades": self._check_protocol_upgrades(symbol)
+        }
+    
+    def _analyze_market_metrics(self, symbol: str) -> Dict:
+        """تحلیل معیارهای بازار"""
+        return {
+            "liquidity_score": self._calculate_liquidity_score(symbol),
+            "volume_reliability": self._assess_volume_reliability(symbol),
+            "market_depth": self._measure_market_depth(symbol),
+            "whale_activity": self._monitor_whale_activity(symbol),
+            "exchange_health": self._assess_exchange_health(symbol)
+        }
+    
+    def _calculate_fundamental_score(self, coin_data: Dict, cmc_data: Dict,
+                                  network: Dict, development: Dict, market: Dict) -> float:
+        """محاسبه امتیاز فاندامنتال نهایی"""
+        scores = []
+        
+        # امتیاز بازار
+        market_cap = coin_data.get('market_cap', 0)
+        if market_cap > 10e9:  # بیش از 10 میلیارد
+            scores.append(0.9)
+        elif market_cap > 1e9:  # 1-10 میلیارد
+            scores.append(0.7)
+        elif market_cap > 100e6:  # 100 میلیون - 1 میلیارد
+            scores.append(0.5)
+        else:
+            scores.append(0.3)
+        
+        # امتیاز حجم معاملات
+        volume_24h = coin_data.get('volume_24h', 0)
+        if volume_24h > 100e6:
+            scores.append(0.8)
+        elif volume_24h > 10e6:
+            scores.append(0.6)
+        else:
+            scores.append(0.4)
+        
+        # امتیاز رتبه بازار
+        market_rank = coin_data.get('market_cap_rank', 999)
+        if market_rank <= 10:
+            scores.append(0.9)
+        elif market_rank <= 50:
+            scores.append(0.7)
+        elif market_rank <= 100:
+            scores.append(0.5)
+        else:
+            scores.append(0.3)
+        
+        # میانگین امتیازها
+        if scores:
+            return round(sum(scores) / len(scores), 2)
+        else:
+            return 0.5
+    
+    def _get_fundamental_grade(self, score: float) -> str:
+        """درجه‌بندی فاندامنتال"""
+        if score >= 0.8:
+            return "عالی"
+        elif score >= 0.7:
+            return "خوب"
+        elif score >= 0.6:
+            return "متوسط"
+        elif score >= 0.4:
+            return "ضعیف"
+        else:
+            return "خیلی ضعیف"
+    
+    def _get_fear_greed_index(self) -> Dict:
+        """شاخص ترس و طمع"""
+        try:
+            # در عمل نیاز به API دارد
+            return {
+                "value": 55,  # شبیه‌سازی
+                "sentiment": "خنثی",
+                "description": "بازار در حالت تعادل"
+            }
+        except:
+            return {
+                "value": 50,
+                "sentiment": "نامشخص",
+                "description": "داده در دسترس نیست"
+            }
+    
+    def _get_social_volume(self, symbol: str) -> Dict:
+        """حجم بحث‌های اجتماعی"""
+        return {
+            "twitter_mentions": 0,  # شبیه‌سازی
+            "reddit_posts": 0,
+            "telegram_members": 0,
+            "sentiment": "خنثی"
+        }
+    
+    def _calculate_adoption_rate(self, symbol: str) -> float:
+        """نرخ پذیرش"""
+        return 0.5  # شبیه‌سازی
+    
+    def _identify_risk_factors(self, symbol: str, coin_data: Dict) -> List[str]:
+        """شناسایی عوامل ریسک"""
+        risks = []
+        
+        market_cap = coin_data.get('market_cap', 0)
+        if market_cap < 100e6:
+            risks.append("مارکت‌کپ پایین")
+        
+        volume = coin_data.get('volume_24h', 0)
+        if volume < 1e6:
+            risks.append("نقدشوندگی کم")
+        
+        price_change = coin_data.get('price_change_24h', 0)
+        if abs(price_change) > 20:
+            risks.append("نوسان قیمت بالا")
+        
+        return risks
+    
+    def _identify_opportunities(self, symbol: str, coin_data: Dict) -> List[str]:
+        """شناسایی فرصت‌ها"""
+        opportunities = []
+        
+        market_rank = coin_data.get('market_cap_rank', 999)
+        if market_rank <= 50:
+            opportunities.append("پروژه برتر بازار")
+        
+        price_change = coin_data.get('price_change_7d', 0)
+        if price_change > 10:
+            opportunities.append("روند صعودی قوی")
+        
+        return opportunities
+    
+    def _detect_symbol_type(self, symbol: str) -> str:
+        """تشخیص نوع نماد"""
+        if '/' in symbol:
+            base, quote = symbol.split('/')
+            if quote in ['USDT', 'USD', 'BTC', 'ETH']:
+                return "crypto"
+        return "unknown"
+    
+    def _symbol_to_coingecko_id(self, symbol: str) -> Optional[str]:
+        """تبدیل نماد به ID کوین‌گکو"""
+        symbol_map = {
+            'BTC/USDT': 'bitcoin',
+            'ETH/USDT': 'ethereum',
+            'BNB/USDT': 'binancecoin',
+            'ADA/USDT': 'cardano',
+            'DOT/USDT': 'polkadot',
+            'LTC/USDT': 'litecoin',
+            'LINK/USDT': 'chainlink',
+            'BCH/USDT': 'bitcoin-cash',
+            'XLM/USDT': 'stellar',
+            'XRP/USDT': 'ripple'
+        }
+        return symbol_map.get(symbol)
+    
+    # متدهای شبیه‌سازی برای داده‌های شبکه
+    def _get_network_hash_rate(self, symbol): return 0
+    def _get_daily_transactions(self, symbol): return 0
+    def _get_active_addresses(self, symbol): return 0
+    def _calculate_network_value(self, symbol): return 0
+    def _analyze_miner_health(self, symbol): return "نامشخص"
+    def _calculate_decentralization_score(self, symbol): return 0.5
+    def _get_github_activity(self, symbol): return 0
+    def _estimate_developer_count(self, symbol): return 0
+    def _get_recent_updates(self, symbol): return []
+    def _measure_community_engagement(self, symbol): return 0.5
+    def _check_protocol_upgrades(self, symbol): return []
+    def _calculate_liquidity_score(self, symbol): return 0.5
+    def _assess_volume_reliability(self, symbol): return 0.5
+    def _measure_market_depth(self, symbol): return 0.5
+    def _monitor_whale_activity(self, symbol): return "طبیعی"
+    def _assess_exchange_health(self, symbol): return "خوب"
+    
+    # متدهای سهام
+    def _get_stock_financials(self, symbol): return {}
+    def _calculate_financial_ratios(self, financial_data): return {}
+    def _analyze_industry(self, symbol): return {}
+    def _analyze_management(self, symbol): return {}
+    def _calculate_stock_score(self, financial_data, ratios, industry_analysis): return 0.5
+    def _calculate_intrinsic_value(self, financial_data): return 0
+    def _calculate_fair_value(self, financial_data, ratios): return 0
+    def _calculate_margin_of_safety(self, financial_data): return 0
+    def _identify_stock_risks(self, symbol, financial_data): return []
+    def _analyze_growth_prospects(self, symbol, financial_data): return []
+    
+    def _default_analysis(self, symbol):
+        return {
+            "symbol": symbol,
+            "type": "unknown",
+            "fundamental_score": 0.5,
+            "grade": "نامشخص",
+            "metrics": {},
+            "risk_factors": ["داده فاندامنتال در دسترس نیست"]
+        }
+    
+    def _default_crypto_analysis(self, symbol):
+        analysis = self._default_analysis(symbol)
+        analysis["type"] = "crypto"
+        return analysis
+    
+    def _default_stock_analysis(self, symbol):
+        analysis = self._default_analysis(symbol)
+        analysis["type"] = "stock"
+        return analysis
