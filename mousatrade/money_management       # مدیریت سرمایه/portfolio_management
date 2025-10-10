@@ -1,0 +1,364 @@
+"""
+مدیریت پرتفوی
+"""
+
+import numpy as np
+import pandas as pd
+from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+from dataclasses import dataclass
+import logging
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class PortfolioStrategy(Enum):
+    EQUAL_WEIGHT = "EQUAL_WEIGHT"              # وزن مساوی
+    RISK_PARITY = "RISK_PARITY"                # برابری ریسک
+    MINIMUM_VARIANCE = "MINIMUM_VARIANCE"      # حداقل واریانس
+    MAXIMUM_DIVERSIFICATION = "MAXIMUM_DIVERSIFICATION" # حداکثر تنوع
+    TREND_FOLLOWING = "TREND_FOLLOWING"        # پیروی از روند
+
+@dataclass
+class PortfolioAllocation:
+    """تخصیص پرتفوی"""
+    symbol: str
+    target_weight: float
+    current_weight: float
+    suggested_position: float
+    risk_contribution: float
+    correlation_score: float
+
+@dataclass
+class PortfolioAnalysis:
+    """تحلیل پرتفوی"""
+    total_value: float
+    total_risk: float
+    diversification_ratio: float
+    sharpe_ratio: float
+    max_drawdown: float
+    sector_exposure: Dict[str, float]
+    risk_contributions: Dict[str, float]
+    suggested_rebalancing: List[PortfolioAllocation]
+
+class PortfolioManager:
+    """مدیر پرتفوی"""
+    
+    def __init__(self, initial_capital: float = 10000):
+        self.initial_capital = initial_capital
+        self.current_positions: Dict[str, float] = {}
+        self.portfolio_history: List[Dict] = []
+        
+    def analyze_portfolio(self, 
+                        positions: Dict[str, float],
+                        market_data: Dict[str, pd.DataFrame],
+                        risk_free_rate: float = 0.02) -> PortfolioAnalysis:
+        """تحلیل پرتفوی فعلی"""
+        try:
+            # محاسبه ارزش کل
+            total_value = self._calculate_total_value(positions, market_data)
+            
+            # محاسبه ریسک پرتفوی
+            portfolio_risk = self._calculate_portfolio_risk(positions, market_data)
+            
+            # محاسبه نسبت تنوع
+            diversification_ratio = self._calculate_diversification_ratio(positions, market_data)
+            
+            # محاسبه Sharpe Ratio
+            sharpe_ratio = self._calculate_portfolio_sharpe(positions, market_data, risk_free_rate)
+            
+            # محاسبه حداکثر drawdown
+            max_drawdown = self._calculate_portfolio_drawdown(positions, market_data)
+            
+            # تحلیل مواجهه سکتوری
+            sector_exposure = self._analyze_sector_exposure(positions)
+            
+            # تحلیل سهم ریسک
+            risk_contributions = self._calculate_risk_contributions(positions, market_data)
+            
+            # پیشنهادات rebalancing
+            suggested_rebalancing = self._suggest_rebalancing(positions, market_data, total_value)
+            
+            return PortfolioAnalysis(
+                total_value=total_value,
+                total_risk=portfolio_risk,
+                diversification_ratio=diversification_ratio,
+                sharpe_ratio=sharpe_ratio,
+                max_drawdown=max_drawdown,
+                sector_exposure=sector_exposure,
+                risk_contributions=risk_contributions,
+                suggested_rebalancing=suggested_rebalancing
+            )
+            
+        except Exception as e:
+            logger.error(f"خطا در تحلیل پرتفوی: {e}")
+            return self._get_empty_analysis()
+    
+    def optimize_portfolio(self,
+                         symbols: List[str],
+                         market_data: Dict[str, pd.DataFrame],
+                         strategy: PortfolioStrategy = PortfolioStrategy.RISK_PARITY,
+                         constraints: Optional[Dict] = None) -> Dict[str, float]:
+        """بهینه‌سازی پرتفوی"""
+        try:
+            if strategy == PortfolioStrategy.EQUAL_WEIGHT:
+                return self._equal_weight_allocation(symbols)
+            elif strategy == PortfolioStrategy.RISK_PARITY:
+                return self._risk_parity_allocation(symbols, market_data)
+            elif strategy == PortfolioStrategy.MINIMUM_VARIANCE:
+                return self._minimum_variance_allocation(symbols, market_data)
+            elif strategy == PortfolioStrategy.MAXIMUM_DIVERSIFICATION:
+                return self._maximum_diversification_allocation(symbols, market_data)
+            elif strategy == PortfolioStrategy.TREND_FOLLOWING:
+                return self._trend_following_allocation(symbols, market_data)
+            else:
+                return self._equal_weight_allocation(symbols)
+                
+        except Exception as e:
+            logger.error(f"خطا در بهینه‌سازی پرتفوی: {e}")
+            return self._equal_weight_allocation(symbols)
+    
+    def calculate_rebalancing_needs(self,
+                                  current_allocations: Dict[str, float],
+                                  target_allocations: Dict[str, float],
+                                  total_value: float,
+                                  threshold: float = 0.05) -> List[Dict]:
+        """محاسبه نیازهای rebalancing"""
+        rebalancing_actions = []
+        
+        for symbol, target_weight in target_allocations.items():
+            current_weight = current_allocations.get(symbol, 0.0)
+            weight_diff = target_weight - current_weight
+            
+            # اگر اختلاف بیشتر از threshold باشد
+            if abs(weight_diff) > threshold:
+                adjustment_amount = total_value * weight_diff
+                
+                rebalancing_actions.append({
+                    "symbol": symbol,
+                    "action": "BUY" if weight_diff > 0 else "SELL",
+                    "amount": abs(adjustment_amount),
+                    "current_weight": current_weight,
+                    "target_weight": target_weight,
+                    "weight_diff": weight_diff
+                })
+        
+        return sorted(rebalancing_actions, key=lambda x: abs(x['weight_diff']), reverse=True)
+    
+    def _equal_weight_allocation(self, symbols: List[str]) -> Dict[str, float]:
+        """تخصیص وزن مساوی"""
+        n = len(symbols)
+        weight = 1.0 / n if n > 0 else 0.0
+        
+        return {symbol: weight for symbol in symbols}
+    
+    def _risk_parity_allocation(self, symbols: List[str], 
+                              market_data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
+        """تخصیص برابری ریسک"""
+        try:
+            # محاسبه واریانس هر دارایی
+            variances = {}
+            for symbol in symbols:
+                if symbol in market_data:
+                    returns = market_data[symbol]['close'].pct_change().dropna()
+                    variances[symbol] = returns.var()
+            
+            # محاسبه وزن معکوس واریانس
+            total_inverse_variance = sum(1/v for v in variances.values() if v > 0)
+            
+            allocations = {}
+            for symbol, variance in variances.items():
+                if variance > 0:
+                    allocations[symbol] = (1/variance) / total_inverse_variance
+            
+            return allocations
+            
+        except Exception as e:
+            logger.warning(f"خطا در تخصیص برابری ریسک: {e}")
+            return self._equal_weight_allocation(symbols)
+    
+    def _minimum_variance_allocation(self, symbols: List[str],
+                                  market_data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
+        """تخصیص حداقل واریانس"""
+        # این یک پیاده‌سازی ساده شده است
+        # در عمل نیاز به بهینه‌سازی quadratic programming دارد
+        return self._risk_parity_allocation(symbols, market_data)
+    
+    def _maximum_diversification_allocation(self, symbols: List[str],
+                                         market_data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
+        """تخصیص حداکثر تنوع"""
+        # این یک پیاده‌سازی ساده شده است
+        return self._risk_parity_allocation(symbols, market_data)
+    
+    def _trend_following_allocation(self, symbols: List[str],
+                                  market_data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
+        """تخصیص پیروی از روند"""
+        try:
+            trend_scores = {}
+            
+            for symbol in symbols:
+                if symbol in market_data:
+                    data = market_data[symbol]
+                    
+                    # محاسبه قدرت روند
+                    sma_20 = data['close'].rolling(20).mean()
+                    sma_50 = data['close'].rolling(50).mean()
+                    
+                    current_price = data['close'].iloc[-1]
+                    trend_strength = 1.0 if sma_20.iloc[-1] > sma_50.iloc[-1] else 0.0
+                    price_vs_ma = current_price / sma_20.iloc[-1] - 1
+                    
+                    # امتیاز روند
+                    trend_score = trend_strength * (1 + max(0, price_vs_ma))
+                    trend_scores[symbol] = trend_score
+            
+            # نرمالایز کردن امتیازها
+            total_score = sum(trend_scores.values())
+            
+            if total_score > 0:
+                return {symbol: score/total_score for symbol, score in trend_scores.items()}
+            else:
+                return self._equal_weight_allocation(symbols)
+                
+        except Exception as e:
+            logger.warning(f"خطا در تخصیص پیروی از روند: {e}")
+            return self._equal_weight_allocation(symbols)
+    
+    def _calculate_total_value(self, positions: Dict[str, float],
+                             market_data: Dict[str, pd.DataFrame]) -> float:
+        """محاسبه ارزش کل پرتفوی"""
+        total = 0.0
+        
+        for symbol, position in positions.items():
+            if symbol in market_data and not market_data[symbol].empty:
+                current_price = market_data[symbol]['close'].iloc[-1]
+                total += position * current_price
+        
+        return total
+    
+    def _calculate_portfolio_risk(self, positions: Dict[str, float],
+                                market_data: Dict[str, pd.DataFrame]) -> float:
+        """محاسبه ریسک پرتفوی"""
+        # این یک پیاده‌سازی ساده شده است
+        # در عمل نیاز به محاسبه واریانس-کوواریانس ماتریکس دارد
+        
+        individual_risks = []
+        for symbol in positions:
+            if symbol in market_data:
+                returns = market_data[symbol]['close'].pct_change().dropna()
+                if len(returns) > 1:
+                    individual_risks.append(returns.std())
+        
+        return np.mean(individual_risks) if individual_risks else 0.0
+    
+    def _calculate_diversification_ratio(self, positions: Dict[str, float],
+                                       market_data: Dict[str, pd.DataFrame]) -> float:
+        """محاسبه نسبت تنوع"""
+        n = len(positions)
+        if n <= 1:
+            return 0.0
+        
+        # نسبت تنوع ساده شده
+        return min(1.0, (n - 1) / n)
+    
+    def _calculate_portfolio_sharpe(self, positions: Dict[str, float],
+                                  market_data: Dict[str, pd.DataFrame],
+                                  risk_free_rate: float) -> float:
+        """محاسبه Sharpe Ratio پرتفوی"""
+        portfolio_risk = self._calculate_portfolio_risk(positions, market_data)
+        if portfolio_risk == 0:
+            return 0.0
+        
+        # بازدهی ساده شده
+        simple_return = 0.05  # فرض 5% بازدهی
+        excess_return = simple_return - risk_free_rate
+        
+        return excess_return / portfolio_risk
+    
+    def _calculate_portfolio_drawdown(self, positions: Dict[str, float],
+                                    market_data: Dict[str, pd.DataFrame]) -> float:
+        """محاسبه حداکثر drawdown پرتفوی"""
+        # این یک پیاده‌سازی ساده شده است
+        return 0.1  # فرض 10% drawdown
+    
+    def _analyze_sector_exposure(self, positions: Dict[str, float]) -> Dict[str, float]:
+        """تحلیل مواجهه سکتوری"""
+        # نگاشت ساده سیمبل به سکتور
+        sector_map = {
+            'BTC': 'Store of Value',
+            'ETH': 'Smart Contract',
+            'ADA': 'Smart Contract', 
+            'DOT': 'Interoperability',
+            'LINK': 'Oracle',
+            'LTC': 'Payments',
+            'BCH': 'Payments',
+            'XLM': 'Payments'
+        }
+        
+        sector_exposure = {}
+        total_value = sum(positions.values())
+        
+        if total_value == 0:
+            return {}
+        
+        for symbol, value in positions.items():
+            # استخراج base currency
+            base = symbol.split('/')[0] if '/' in symbol else symbol
+            
+            sector = sector_map.get(base, 'Other')
+            sector_exposure[sector] = sector_exposure.get(sector, 0) + value / total_value
+        
+        return sector_exposure
+    
+    def _calculate_risk_contributions(self, positions: Dict[str, float],
+                                   market_data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
+        """محاسبه سهم ریسک هر دارایی"""
+        total_risk = self._calculate_portfolio_risk(positions, market_data)
+        if total_risk == 0:
+            return {}
+        
+        risk_contributions = {}
+        for symbol in positions:
+            # فرض سهم مساوی برای سادگی
+            risk_contributions[symbol] = 1.0 / len(positions)
+        
+        return risk_contributions
+    
+    def _suggest_rebalancing(self, positions: Dict[str, float],
+                           market_data: Dict[str, pd.DataFrame],
+                           total_value: float) -> List[PortfolioAllocation]:
+        """پیشنهاد rebalancing"""
+        suggestions = []
+        
+        # تخصیص هدف (برابری ریسک)
+        target_allocations = self._risk_parity_allocation(list(positions.keys()), market_data)
+        
+        for symbol, target_weight in target_allocations.items():
+            current_value = positions.get(symbol, 0)
+            current_weight = current_value / total_value if total_value > 0 else 0
+            
+            suggested_position = total_value * target_weight
+            
+            suggestions.append(PortfolioAllocation(
+                symbol=symbol,
+                target_weight=target_weight,
+                current_weight=current_weight,
+                suggested_position=suggested_position,
+                risk_contribution=target_weight,  # در برابری ریسک، سهم ریسک برابر وزن است
+                correlation_score=0.5  # مقدار پیش‌فرض
+            ))
+        
+        return suggestions
+    
+    def _get_empty_analysis(self) -> PortfolioAnalysis:
+        """تحلیل خالی"""
+        return PortfolioAnalysis(
+            total_value=0.0,
+            total_risk=0.0,
+            diversification_ratio=0.0,
+            sharpe_ratio=0.0,
+            max_drawdown=0.0,
+            sector_exposure={},
+            risk_contributions={},
+            suggested_rebalancing=[]
+        )
