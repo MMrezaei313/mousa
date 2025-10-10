@@ -1,0 +1,39 @@
+"""
+مدل‌های دیتابیس برای ذخیره‌سازی داده‌ها
+"""
+
+from datetime import datetime
+from dataclasses import dataclass
+from typing import Optional, List, Dict
+
+@dataclass
+class AnalysisResult:
+    """مدل نتیجه تحلیل"""
+    symbol: str
+    timeframe: str
+    position_type: str
+    confidence: float
+    technical_data: Dict
+    timestamp: datetime
+    
+    def to_dict(self):
+        return {
+            "symbol": self.symbol,
+            "timeframe": self.timeframe,
+            "position_type": self.position_type,
+            "confidence": self.confidence,
+            "timestamp": self.timestamp.isoformat()
+        }
+
+@dataclass
+class TradeAdvice:
+    """مدل پیشنهاد معامله"""
+    symbol: str
+    advice_type: str  # LONG, SHORT, NEUTRAL
+    entry_price: float
+    targets: List[float]
+    stop_loss: float
+    confidence: float
+    risk_level: str
+    reasoning: Dict
+    timestamp: datetime
