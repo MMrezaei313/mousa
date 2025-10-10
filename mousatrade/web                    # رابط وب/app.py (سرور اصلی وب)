@@ -1,0 +1,226 @@
+"""
+سرور وب MousaTrade
+رابط کاربری تحت وب برای مشاور ترید
+"""
+
+from flask import Flask, render_template, request, jsonify, session, send_from_directory
+from flask_cors import CORS
+import os
+import json
+from datetime import datetime
+import logging
+
+from mousatrade.main import mousatrade_advisor
+
+# تنظیمات logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ایجاد برنامه Flask
+app = Flask(__name__, 
+           template_folder='templates',
+           static_folder='static')
+app.secret_key = 'mousatrade-secret-key-2024'
+app.config['SESSION_TYPE'] = 'filesystem'
+
+# فعال کردن CORS
+CORS(app)
+
+# پوشه‌های استاتیک
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('static', filename)
+
+# صفحه اصلی
+@app.route('/')
+def index():
+    """صفحه اصلی برنامه"""
+    return render_template('index.html', 
+                         app_name="MousaTrade Advisor",
+                         version="1.0.0")
+
+# API تنظیم بروکر
+@app.route('/api/brokers', methods=['GET'])
+def get_brokers():
+    """دریافت لیست بروکرهای available"""
+    try:
+        brokers = [
+            {
+                "id": "xchief",
+                "name": "XChief",
+                "supported": True,
+                "auth_required": False,
+                "description": "بروکر XChief با پشتیبانی از بازار ایران"
+            },
+            {
+                "id": "binance",
+                "name": "Binance", 
+                "supported": True,
+                "auth_required": False,
+                "description": "بزرگترین صرافی ارز دیجیتال جهان"
+            },
+            {
+                "id": "bybit",
+                "name": "Bybit",
+                "supported": True, 
+                "auth_required": False,
+                "description": "صرافی تخصصی فیوچرز و مارجین"
+            },
+            {
+                "id": "okx", 
+                "name": "OKX",
+                "supported": True,
+                "auth_required": False,
+                "description": "صرافی جهانی با محصولات متنوع"
+            }
+        ]
+        return jsonify({"brokers": brokers})
+    except Exception as e:
+        logger.error(f"خطا در دریافت لیست بروکرها: {e}")
+        return jsonify({"error": "خطا در دریافت بروکرها"}), 500
+
+@app.route('/api/brokers/<broker_id>', methods=['POST'])
+def set_broker(broker_id):
+    """تنظیم بروکر فعال"""
+    try:
+        data = request.get_json()
+        
+        success = mousatrade_advisor.set_broker(broker_id)
+        
+        if success:
+            session['current_broker'] = broker_id
+            return jsonify({
+                "status": "success",
+                "message": f"بروکر {broker_id} با موفقیت تنظیم شد",
+                "broker": broker_id
+            })
+        else:
+            return jsonify({
+                "status": "error", 
+                "message": f"خطا در تنظیم بروکر {broker_id}"
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"خطا در تنظیم بروکر: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# API تحلیل نماد
+@app.route('/api/analyze/<symbol>', methods=['GET'])
+def analyze_symbol(symbol):
+    """تحلیل کامل یک نماد"""
+    try:
+        timeframe = request.args.get('timeframe', '1h')
+        
+        # بررسی تنظیم بودن بروکر
+        if not mousatrade_advisor.current_broker:
+            return jsonify({
+                "error": "لطفاً ابتدا یک بروکر انتخاب کنید"
+            }), 400
+        
+        # اجرای تحلیل
+        analysis = mousatrade_advisor.get_comprehensive_analysis(symbol, timeframe)
+        
+        if "error" in analysis:
+            return jsonify(analysis), 400
+        
+        return jsonify(analysis)
+        
+    except Exception as e:
+        logger.error(f"خطا در تحلیل نماد {symbol}: {e}")
+        return jsonify({
+            "error": f"خطا در تحلیل: {str(e)}"
+        }), 500
+
+# API بک‌تست استراتژی
+@app.route('/api/backtest/<symbol>', methods=['GET'])
+def backtest_symbol(symbol):
+    """بک‌تست استراتژی روی نماد"""
+    try:
+        strategy = request.args.get('strategy', 'default')
+        timeframe = request.args.get('timeframe', '1h')
+        days = int(request.args.get('days', '90'))
+        
+        if not mousatrade_advisor.current_broker:
+            return jsonify({"error": "بروکر تنظیم نشده"}), 400
+        
+        result = mousatrade_advisor.backtest_strategy(symbol, strategy, timeframe, days)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"خطا در بک‌تست {symbol}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# API بررسی کلی بازار
+@app.route('/api/market/overview', methods=['GET'])
+def market_overview():
+    """بررسی کلی بازار"""
+    try:
+        symbols_param = request.args.get('symbols', 'BTC/USDT,ETH/USDT,ADA/USDT')
+        symbols = [s.strip() for s in symbols_param.split(',')]
+        
+        overview = mousatrade_advisor.get_market_overview(symbols)
+        
+        return jsonify(overview)
+        
+    except Exception as e:
+        logger.error(f"خطا در بررسی بازار: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# API سلامت سیستم
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """بررسی سلامت سیستم"""
+    try:
+        broker_status = "not_set"
+        if mousatrade_advisor.current_broker:
+            broker_status = mousatrade_advisor.current_broker.health_check()
+        
+        return jsonify({
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "version": "1.0.0",
+            "broker": broker_status,
+            "analysis_history_count": len(mousatrade_advisor.analysis_history)
+        })
+        
+    except Exception as e:
+        logger.error(f"خطا در سلامت‌سنجی: {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500
+
+# API تاریخچه تحلیل‌ها
+@app.route('/api/history', methods=['GET'])
+def get_analysis_history():
+    """دریافت تاریخچه تحلیل‌ها"""
+    try:
+        history = []
+        for analysis in mousatrade_advisor.analysis_history[-10:]:  # ۱۰ مورد اخیر
+            history.append({
+                "symbol": analysis.symbol,
+                "position_type": analysis.position_type,
+                "confidence": analysis.confidence,
+                "timestamp": analysis.timestamp.isoformat()
+            })
+        
+        return jsonify({"history": history})
+        
+    except Exception as e:
+        logger.error(f"خطا در دریافت تاریخچه: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# صفحه مدیریت خطاها
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({"error": "صفحه مورد نظر یافت نشد"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({"error": "خطای داخلی سرور"}), 500
+
+# راه‌اندازی سرور
+if __name__ == '__main__':
+    logger.info("🚀 راه‌اندازی سرور MousaTrade...")
+    app.run(host='0.0.0.0', port=5000, debug=True)
