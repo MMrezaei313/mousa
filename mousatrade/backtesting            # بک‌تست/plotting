@@ -1,0 +1,185 @@
+"""
+رسم نمودارهای بکتست
+"""
+
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pandas as pd
+import numpy as np
+from typing import List, Dict
+import logging
+
+logger = logging.getLogger(__name__)
+
+class BacktestPlotter:
+    """نمودارگر نتایج بکتست"""
+    
+    def __init__(self):
+        self.colors = {
+            'profit': '#00C853',
+            'loss': '#FF1744',
+            'equity': '#2962FF',
+            'drawdown': '#FF6D00',
+            'benchmark': '#7B1FA2'
+        }
+    
+    def create_summary_dashboard(self, backtest_result, 
+                               trade_analysis: Dict,
+                               advanced_metrics: Dict) -> go.Figure:
+        """ایجاد داشبورد خلاصه بکتست"""
+        try:
+            fig = make_subplots(
+                rows=3, cols=2,
+                subplot_titles=[
+                    'منحنی سرمایه', 'Drawdown',
+                    'توزیع سود/ضرر', 'معاملات در زمان',
+                    'معیارهای عملکرد', 'سود ماهانه'
+                ],
+                specs=[
+                    [{"secondary_y": False}, {"secondary_y": False}],
+                    [{"secondary_y": False}, {"secondary_y": False}],
+                    [{"secondary_y": False}, {"secondary_y": False}]
+                ]
+            )
+            
+            # منحنی سرمایه
+            self._add_equity_curve(fig, backtest_result.equity_curve, row=1, col=1)
+            
+            # Drawdown
+            self._add_drawdown_chart(fig, backtest_result.equity_curve, row=1, col=2)
+            
+            # توزیع سود/ضرر
+            self._add_pnl_distribution(fig, backtest_result.trades, row=2, col=1)
+            
+            # معاملات در زمان
+            self._add_trades_timeline(fig, backtest_result.trades, row=2, col=2)
+            
+            # معیارهای عملکرد
+            self._add_performance_metrics(fig, backtest_result, row=3, col=1)
+            
+            # سود ماهانه
+            self._add_monthly_profits(fig, trade_analysis.get('profit_by_month', {}), row=3, col=2)
+            
+            fig.update_layout(
+                height=1200,
+                showlegend=True,
+                title_text="داشبورد نتایج بکتست",
+                template="plotly_white"
+            )
+            
+            return fig
+            
+        except Exception as e:
+            logger.error(f"خطا در ایجاد داشبورد: {e}")
+            return go.Figure()
+    
+    def _add_equity_curve(self, fig, equity_curve: pd.Series, row: int, col: int):
+        """افزودن منحنی سرمایه"""
+        fig.add_trace(
+            go.Scatter(
+                x=equity_curve.index,
+                y=equity_curve.values,
+                mode='lines',
+                name='سرمایه',
+                line=dict(color=self.colors['equity'], width=2)
+            ),
+            row=row, col=col
+        )
+    
+    def _add_drawdown_chart(self, fig, equity_curve: pd.Series, row: int, col: int):
+        """افزودن نمودار Drawdown"""
+        peak = equity_curve.expanding().max()
+        drawdown = (equity_curve - peak) / peak * 100
+        
+        fig.add_trace(
+            go.Scatter(
+                x=drawdown.index,
+                y=drawdown.values,
+                mode='lines',
+                name='Drawdown',
+                fill='tozeroy',
+                line=dict(color=self.colors['drawdown'], width=1)
+            ),
+            row=row, col=col
+        )
+    
+    def _add_pnl_distribution(self, fig, trades: List, row: int, col: int):
+        """افزودن توزیع سود/ضرر"""
+        pnls = [t.pnl for t in trades if t.pnl is not None]
+        
+        if pnls:
+            fig.add_trace(
+                go.Histogram(
+                    x=pnls,
+                    name='توزیع سود/ضرر',
+                    marker_color=self.colors['equity'],
+                    opacity=0.7
+                ),
+                row=row, col=col
+            )
+    
+    def _add_trades_timeline(self, fig, trades: List, row: int, col: int):
+        """افزودن جدول زمانی معاملات"""
+        entry_times = [t.entry_time for t in trades if t.entry_time]
+        exit_times = [t.exit_time for t in trades if t.exit_time]
+        pnls = [t.pnl for t in trades if t.pnl is not None]
+        
+        colors = [self.colors['profit'] if pnl > 0 else self.colors['loss'] for pnl in pnls]
+        
+        fig.add_trace(
+            go.Scatter(
+                x=entry_times,
+                y=pnls,
+                mode='markers',
+                name='معاملات',
+                marker=dict(
+                    size=8,
+                    color=colors,
+                    opacity=0.7
+                )
+            ),
+            row=row, col=col
+        )
+    
+    def _add_performance_metrics(self, fig, backtest_result, row: int, col: int):
+        """افزودن معیارهای عملکرد"""
+        metrics = [
+            f"بازدهی کل: {backtest_result.total_return:.2f}%",
+            f"Win Rate: {backtest_result.win_rate:.1%}",
+            f"تعداد معاملات: {backtest_result.total_trades}",
+            f"حداکثر Drawdown: {backtest_result.max_drawdown:.2f}%",
+            f"Sharpe Ratio: {backtest_result.sharpe_ratio:.2f}",
+            f"Profit Factor: {backtest_result.profit_factor:.2f}"
+        ]
+        
+        fig.add_trace(
+            go.Table(
+                header=dict(values=['معیار', 'مقدار']),
+                cells=dict(values=[['بازدهی کل', 'Win Rate', 'تعداد معاملات', 
+                                  'حداکثر Drawdown', 'Sharpe Ratio', 'Profit Factor'],
+                                 [f"{backtest_result.total_return:.2f}%",
+                                  f"{backtest_result.win_rate:.1%}",
+                                  f"{backtest_result.total_trades}",
+                                  f"{backtest_result.max_drawdown:.2f}%", 
+                                  f"{backtest_result.sharpe_ratio:.2f}",
+                                  f"{backtest_result.profit_factor:.2f}"]])
+            ),
+            row=row, col=col
+        )
+    
+    def _add_monthly_profits(self, fig, monthly_profits: Dict, row: int, col: int):
+        """افزودن سود ماهانه"""
+        months = list(monthly_profits.keys())
+        profits = list(monthly_profits.values())
+        
+        colors = [self.colors['profit'] if p > 0 else self.colors['loss'] for p in profits]
+        
+        fig.add_trace(
+            go.Bar(
+                x=months,
+                y=profits,
+                name='سود ماهانه',
+                marker_color=colors
+            ),
+            row=row, col=col
+        )
