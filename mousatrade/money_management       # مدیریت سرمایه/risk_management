@@ -1,0 +1,50 @@
+"""
+مدیریت ریسک و سرمایه
+"""
+
+import numpy as np
+from typing import Dict, List
+from enum import Enum
+
+class RiskLevel(Enum):
+    LOW = "low"
+    MEDIUM = "medium" 
+    HIGH = "high"
+    VERY_HIGH = "very_high"
+
+class RiskManager:
+    """مدیر ریسک"""
+    
+    def __init__(self):
+        self.position_sizes = {
+            RiskLevel.LOW: 0.05,      # 5%
+            RiskLevel.MEDIUM: 0.03,   # 3%
+            RiskLevel.HIGH: 0.01,     # 1%
+            RiskLevel.VERY_HIGH: 0.005 # 0.5%
+        }
+    
+    def calculate_position_size(self, account_balance: float, 
+                              risk_level: RiskLevel) -> float:
+        """محاسبه سایز پوزیشن"""
+        risk_percentage = self.position_sizes.get(risk_level, 0.01)
+        return account_balance * risk_percentage
+    
+    def calculate_stop_loss(self, entry_price: float, 
+                          position_type: str, volatility: float) -> float:
+        """محاسبه حد ضرر"""
+        if position_type == "LONG":
+            return entry_price * (1 - volatility * 2)
+        else:  # SHORT
+            return entry_price * (1 + volatility * 2)
+    
+    def validate_risk_parameters(self, entry: float, stop_loss: float, 
+                               targets: List[float]) -> bool:
+        """اعتبارسنجی پارامترهای ریسک"""
+        if entry <= 0 or stop_loss <= 0:
+            return False
+        
+        risk_amount = abs(entry - stop_loss)
+        if risk_amount / entry > 0.1:  # بیش از 10% ریسک
+            return False
+            
+        return True
