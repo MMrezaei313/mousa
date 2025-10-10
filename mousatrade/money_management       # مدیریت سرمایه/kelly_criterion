@@ -1,0 +1,187 @@
+"""
+معیار کلی برای مدیریت سرمایه
+"""
+
+import numpy as np
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+import logging
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class KellyResult:
+    """نتیجه محاسبه کلی"""
+    kelly_fraction: float
+    full_kelly: float
+    half_kelly: float
+    quarter_kelly: float
+    suggested_fraction: float
+    win_rate: float
+    loss_rate: float
+    payoff_ratio: float
+    expected_growth: float
+
+class KellyCriterion:
+    """محاسبه‌گر معیار کلی"""
+    
+    def __init__(self):
+        self.min_win_rate = 0.1
+        self.max_win_rate = 0.9
+        self.min_payoff_ratio = 0.1
+        self.max_payoff_ratio = 10.0
+    
+    def calculate_kelly(self, 
+                       win_rate: float,
+                       avg_win: float,
+                       avg_loss: float,
+                       method: str = "simple") -> KellyResult:
+        """محاسبه معیار کلی"""
+        try:
+            # اعتبارسنجی ورودی‌ها
+            win_rate = np.clip(win_rate, self.min_win_rate, self.max_win_rate)
+            loss_rate = 1 - win_rate
+            
+            if avg_loss <= 0:
+                logger.warning("میانگین ضرر باید بزرگتر از صفر باشد")
+                return self._get_default_result()
+            
+            payoff_ratio = avg_win / avg_loss
+            
+            if method == "simple":
+                kelly_fraction = self._simple_kelly(win_rate, loss_rate, payoff_ratio)
+            elif method == "optimal":
+                kelly_fraction = self._optimal_kelly(win_rate, avg_win, avg_loss)
+            else:
+                kelly_fraction = self._simple_kelly(win_rate, loss_rate, payoff_ratio)
+            
+            # محاسبه انواع کلی
+            half_kelly = kelly_fraction / 2
+            quarter_kelly = kelly_fraction / 4
+            
+            # پیشنهاد fraction (استفاده از نصف کلی برای محافظه‌کاری)
+            suggested_fraction = half_kelly
+            
+            # محاسبه رشد مورد انتظار
+            expected_growth = self._calculate_expected_growth(
+                win_rate, avg_win, avg_loss, suggested_fraction
+            )
+            
+            return KellyResult(
+                kelly_fraction=kelly_fraction,
+                full_kelly=kelly_fraction,
+                half_kelly=half_kelly,
+                quarter_kelly=quarter_kelly,
+                suggested_fraction=suggested_fraction,
+                win_rate=win_rate,
+                loss_rate=loss_rate,
+                payoff_ratio=payoff_ratio,
+                expected_growth=expected_growth
+            )
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه کلی: {e}")
+            return self._get_default_result()
+    
+    def calculate_from_trade_history(self, 
+                                   trades: List[Dict]) -> KellyResult:
+        """محاسبه کلی از تاریخچه معاملات"""
+        try:
+            if not trades:
+                return self._get_default_result()
+            
+            # استخراج سود/ضررها
+            pnls = [trade.get('pnl', 0) for trade in trades if trade.get('pnl') is not None]
+            
+            if not pnls:
+                return self._get_default_result()
+            
+            # محاسبه win rate
+            winning_trades = [p for p in pnls if p > 0]
+            win_rate = len(winning_trades) / len(pnls)
+            
+            # محاسبه میانگین سود و ضرر
+            avg_win = np.mean(winning_trades) if winning_trades else 0
+            losing_trades = [p for p in pnls if p <= 0]
+            avg_loss = abs(np.mean(losing_trades)) if losing_trades else 1
+            
+            # اگر avg_loss صفر باشد، از مقدار پیش‌فرض استفاده کن
+            if avg_loss <= 0:
+                avg_loss = 1
+            
+            return self.calculate_kelly(win_rate, avg_win, avg_loss)
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه کلی از تاریخچه: {e}")
+            return self._get_default_result()
+    
+    def _simple_kelly(self, win_rate: float, loss_rate: float, payoff_ratio: float) -> float:
+        """فرمول ساده کلی"""
+        return win_rate - (loss_rate / payoff_ratio)
+    
+    def _optimal_kelly(self, win_rate: float, avg_win: float, avg_loss: float) -> float:
+        """فرمول بهینه کلی"""
+        if avg_loss <= 0:
+            return 0.1
+        
+        # برای توزیع‌های غیرنرمال
+        expected_value = win_rate * avg_win - (1 - win_rate) * avg_loss
+        variance = (win_rate * avg_win**2 + (1 - win_rate) * avg_loss**2) - expected_value**2
+        
+        if variance <= 0:
+            return self._simple_kelly(win_rate, 1-win_rate, avg_win/avg_loss)
+        
+        return expected_value / variance
+    
+    def _calculate_expected_growth(self, win_rate: float, avg_win: float, 
+                                avg_loss: float, fraction: float) -> float:
+        """محاسبه رشد مورد انتظار"""
+        growth_per_trade = (1 + fraction * avg_win)**win_rate * (1 - fraction * avg_loss)**(1 - win_rate)
+        return (growth_per_trade - 1) * 100  # به درصد
+    
+    def validate_kelly_fraction(self, fraction: float, 
+                              account_balance: float,
+                              min_trade_size: float = 10) -> Tuple[bool, str]:
+        """اعتبارسنجی fraction کلی"""
+        if fraction <= 0:
+            return False, "کسر کلی باید بزرگتر از صفر باشد"
+        
+        if fraction > 1:
+            return False, "کسر کلی نمی‌تواند بزرگتر از ۱ باشد"
+        
+        min_fraction = min_trade_size / account_balance
+        if fraction < min_fraction:
+            return False, f"کسر کلی کمتر از حداقل سایز معامله است (>{min_fraction:.4f})"
+        
+        if fraction > 0.25:
+            return False, "کسر کلی بسیار بالا است (ریسک بسیار زیاد)"
+        
+        return True, "کسر کلی معتبر است"
+    
+    def get_risk_adjusted_fraction(self, kelly_fraction: float,
+                                 risk_tolerance: str = "MEDIUM") -> float:
+        """دریافت کسر تعدیل‌شده بر اساس ریسک"""
+        multipliers = {
+            "VERY_CONSERVATIVE": 0.125,  # 1/8 کلی
+            "CONSERVATIVE": 0.25,        # 1/4 کلی
+            "MEDIUM": 0.5,               # 1/2 کلی
+            "AGGRESSIVE": 0.75,          # 3/4 کلی
+            "VERY_AGGRESSIVE": 1.0       # کلی کامل
+        }
+        
+        multiplier = multipliers.get(risk_tolerance, 0.5)
+        return kelly_fraction * multiplier
+    
+    def _get_default_result(self) -> KellyResult:
+        """نتیجه پیش‌فرض"""
+        return KellyResult(
+            kelly_fraction=0.1,
+            full_kelly=0.1,
+            half_kelly=0.05,
+            quarter_kelly=0.025,
+            suggested_fraction=0.05,
+            win_rate=0.5,
+            loss_rate=0.5,
+            payoff_ratio=1.0,
+            expected_growth=0.0
+        )
