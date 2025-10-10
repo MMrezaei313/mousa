@@ -1,0 +1,191 @@
+"""
+تحلیل روند بازار
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Tuple
+import logging
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class TrendDirection(Enum):
+    STRONG_BULLISH = "STRONG_BULLISH"
+    BULLISH = "BULLISH"
+    NEUTRAL = "NEUTRAL"
+    BEARISH = "BEARISH"
+    STRONG_BEARISH = "STRONG_BEARISH"
+
+class TrendAnalyzer:
+    """تحلیل‌گر روند"""
+    
+    def __init__(self):
+        self.ma_periods = [9, 21, 50, 200]
+    
+    def analyze_trend(self, df: pd.DataFrame) -> Dict:
+        """تحلیل کامل روند"""
+        try:
+            close = df['close']
+            
+            # تحلیل میانگین‌های متحرک
+            ma_analysis = self._analyze_moving_averages(close)
+            
+            # تحلیل ADX
+            adx_analysis = self._analyze_adx(df)
+            
+            # تحلیل مومنتوم
+            momentum_analysis = self._analyze_momentum(close)
+            
+            # تشخیص جهت روند
+            trend_direction = self._determine_trend_direction(ma_analysis, adx_analysis, momentum_analysis)
+            
+            return {
+                "direction": trend_direction.value,
+                "strength": adx_analysis.get('strength', 0.5),
+                "moving_averages": ma_analysis,
+                "adx": adx_analysis,
+                "momentum": momentum_analysis,
+                "is_trending": adx_analysis.get('strength', 0) > 25,
+                "trend_duration": self._estimate_trend_duration(df)
+            }
+            
+        except Exception as e:
+            logger.error(f"خطا در تحلیل روند: {e}")
+            return {}
+    
+    def _analyze_moving_averages(self, close: pd.Series) -> Dict:
+        """تحلیل میانگین‌های متحرک"""
+        ma_values = {}
+        ma_alignment = []
+        
+        for period in self.ma_periods:
+            ma = close.rolling(period).mean().iloc[-1]
+            ma_values[f'ma_{period}'] = ma
+        
+        # بررسی تراز بودن MAها
+        if (ma_values['ma_9'] > ma_values['ma_21'] > 
+            ma_values['ma_50'] > ma_values['ma_200']):
+            ma_alignment = "STRONG_BULLISH"
+        elif (ma_values['ma_9'] < ma_values['ma_21'] < 
+              ma_values['ma_50'] < ma_values['ma_200']):
+            ma_alignment = "STRONG_BEARISH"
+        elif (ma_values['ma_9'] > ma_values['ma_21'] > 
+              ma_values['ma_50']):
+            ma_alignment = "BULLISH"
+        elif (ma_values['ma_9'] < ma_values['ma_21'] < 
+              ma_values['ma_50']):
+            ma_alignment = "BEARISH"
+        else:
+            ma_alignment = "NEUTRAL"
+        
+        return {
+            "values": ma_values,
+            "alignment": ma_alignment,
+            "price_vs_ma": close.iloc[-1] / ma_values['ma_50'] - 1
+        }
+    
+    def _analyze_adx(self, df: pd.DataFrame, period: int = 14) -> Dict:
+        """تحلیل ADX"""
+        try:
+            high = df['high']
+            low = df['low']
+            close = df['close']
+            
+            # محاسبات ساده‌شده ADX
+            tr = np.maximum(high - low, 
+                          np.maximum(abs(high - close.shift()), 
+                                   abs(low - close.shift())))
+            atr = tr.rolling(period).mean()
+            
+            plus_dm = high.diff()
+            minus_dm = low.diff().abs()
+            
+            plus_di = 100 * (plus_dm.rolling(period).mean() / atr)
+            minus_di = 100 * (minus_dm.rolling(period).mean() / atr)
+            
+            dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+            adx = dx.rolling(period).mean()
+            
+            current_adx = adx.iloc[-1] if not adx.empty else 0
+            current_plus_di = plus_di.iloc[-1] if not plus_di.empty else 0
+            current_minus_di = minus_di.iloc[-1] if not minus_di.empty else 0
+            
+            strength = current_adx
+            direction = "BULLISH" if current_plus_di > current_minus_di else "BEARISH"
+            
+            return {
+                "adx": current_adx,
+                "plus_di": current_plus_di,
+                "minus_di": current_minus_di,
+                "strength": strength,
+                "direction": direction
+            }
+            
+        except Exception as e:
+            logger.warning(f"خطا در تحلیل ADX: {e}")
+            return {"adx": 0, "plus_di": 0, "minus_di": 0, "strength": 0, "direction": "NEUTRAL"}
+    
+    def _analyze_momentum(self, close: pd.Series) -> Dict:
+        """تحلیل مومنتوم"""
+        try:
+            # RSI
+            delta = close.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            # MACD
+            ema_12 = close.ewm(span=12).mean()
+            ema_26 = close.ewm(span=26).mean()
+            macd = ema_12 - ema_26
+            macd_signal = macd.ewm(span=9).mean()
+            
+            # مومنتوم ساده
+            momentum_10 = close.pct_change(10).iloc[-1]
+            momentum_20 = close.pct_change(20).iloc[-1]
+            
+            return {
+                "rsi": rsi.iloc[-1] if not rsi.empty else 50,
+                "macd": macd.iloc[-1] if not macd.empty else 0,
+                "macd_signal": macd_signal.iloc[-1] if not macd_signal.empty else 0,
+                "momentum_10": momentum_10,
+                "momentum_20": momentum_20,
+                "is_overbought": rsi.iloc[-1] > 70 if not rsi.empty else False,
+                "is_oversold": rsi.iloc[-1] < 30 if not rsi.empty else False
+            }
+            
+        except Exception as e:
+            logger.warning(f"خطا در تحلیل مومنتوم: {e}")
+            return {}
+    
+    def _determine_trend_direction(self, ma_analysis: Dict, 
+                                 adx_analysis: Dict, 
+                                 momentum_analysis: Dict) -> TrendDirection:
+        """تشخیص جهت روند"""
+        ma_alignment = ma_analysis.get('alignment', 'NEUTRAL')
+        adx_strength = adx_analysis.get('strength', 0)
+        adx_direction = adx_analysis.get('direction', 'NEUTRAL')
+        rsi = momentum_analysis.get('rsi', 50)
+        
+        if adx_strength > 40:
+            if (ma_alignment in ['STRONG_BULLISH', 'BULLISH'] and 
+                adx_direction == 'BULLISH' and rsi < 70):
+                return TrendDirection.STRONG_BULLISH
+            elif (ma_alignment in ['STRONG_BEARISH', 'BEARISH'] and 
+                  adx_direction == 'BEARISH' and rsi > 30):
+                return TrendDirection.STRONG_BEARISH
+        
+        if adx_strength > 25:
+            if ma_alignment in ['BULLISH'] and adx_direction == 'BULLISH':
+                return TrendDirection.BULLISH
+            elif ma_alignment in ['BEARISH'] and adx_direction == 'BEARISH':
+                return TrendDirection.BEARISH
+        
+        return TrendDirection.NEUTRAL
+    
+    def _estimate_trend_duration(self, df: pd.DataFrame) -> int:
+        """تخمین مدت روند (روز)"""
+        # پیاده‌سازی ساده - در نسخه کامل باید بهبود یابد
+        return 7
