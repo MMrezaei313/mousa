@@ -1,0 +1,136 @@
+"""
+بروکر Binance برای MousaTrade
+"""
+
+import pandas as pd
+import ccxt
+from typing import Dict, List
+import logging
+from mousatrade.brokers.base_broker import BaseBroker
+
+logger = logging.getLogger(__name__)
+
+class BinanceBroker(BaseBroker):
+    """بروکر Binance"""
+    
+    def __init__(self, api_key: str = None, secret: str = None):
+        super().__init__("Binance", api_key, secret)
+        self.exchange = None
+        self._initialize_exchange()
+    
+    def _initialize_exchange(self):
+        """راه‌اندازی اکسچنج Binance"""
+        try:
+            if self.api_key and self.secret:
+                self.exchange = ccxt.binance({
+                    'apiKey': self.api_key,
+                    'secret': self.secret,
+                    'sandbox': True,  # حالت تست
+                    'enableRateLimit': True
+                })
+            else:
+                self.exchange = ccxt.binance({
+                    'sandbox': True,
+                    'enableRateLimit': True
+                })
+            
+            self.is_authenticated = True
+            self._load_supported_pairs()
+            
+            logger.info("✅ بروکر Binance راه‌اندازی شد")
+            
+        except Exception as e:
+            logger.error(f"❌ خطا در راه‌اندازی Binance: {e}")
+            self.is_authenticated = False
+    
+    def _load_supported_pairs(self):
+        """بارگذاری جفت‌ارزهای پشتیبانی شده"""
+        try:
+            markets = self.exchange.load_markets()
+            self.supported_pairs = [symbol for symbol in markets.keys() 
+                                  if symbol.endswith('/USDT')][:50]  # فقط ۵۰ مورد اول
+            
+            logger.info(f"📊 {len(self.supported_pairs)} جفت ارز از Binance بارگذاری شد")
+            
+        except Exception as e:
+            logger.error(f"خطا در بارگذاری جفت‌ارزهای Binance: {e}")
+            self.supported_pairs = ['BTC/USDT', 'ETH/USDT', 'ADA/USDT', 'DOT/USDT']
+    
+    def authenticate(self) -> bool:
+        """احراز هویت با Binance"""
+        try:
+            # تست اتصال
+            if self.exchange:
+                self.exchange.fetch_balance()
+                self.is_authenticated = True
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"خطا در احراز هویت Binance: {e}")
+            self.is_authenticated = False
+            return False
+    
+    def get_historical_data(self, symbol: str, timeframe: str, 
+                          days: int = 30) -> pd.DataFrame:
+        """دریافت داده‌های تاریخی از Binance"""
+        try:
+            if not self.is_authenticated:
+                logger.warning("بروکر Binance احراز هویت نشده است")
+                return pd.DataFrame()
+            
+            # محاسبه timestamp برای days روز گذشته
+            since = self.exchange.parse8601(
+                (pd.Timestamp.now() - pd.Timedelta(days=days)).isoformat()
+            )
+            
+            # دریافت داده‌های OHLCV
+            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, since)
+            
+            # تبدیل به DataFrame
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            
+            logger.info(f"📊 دریافت {len(df)} کندل از Binance برای {symbol}")
+            return df
+            
+        except Exception as e:
+            logger.error(f"خطا در دریافت داده‌های تاریخی از Binance: {e}")
+            return pd.DataFrame()
+    
+    def get_current_price(self, symbol: str) -> float:
+        """دریافت قیمت فعلی از Binance"""
+        try:
+            if not self.is_authenticated:
+                return 0.0
+            
+            ticker = self.exchange.fetch_ticker(symbol)
+            return float(ticker['last'])
+            
+        except Exception as e:
+            logger.error(f"خطا در دریافت قیمت از Binance: {e}")
+            return 0.0
+    
+    def get_market_info(self, symbol: str) -> Dict:
+        """دریافت اطلاعات بازار از Binance"""
+        try:
+            if not self.is_authenticated:
+                return {}
+            
+            ticker = self.exchange.fetch_ticker(symbol)
+            return {
+                "symbol": symbol,
+                "last_price": float(ticker['last']),
+                "bid": float(ticker['bid']),
+                "ask": float(ticker['ask']),
+                "high_24h": float(ticker['high']),
+                "low_24h": float(ticker['low']),
+                "volume_24h": float(ticker['baseVolume']),
+                "price_change_24h": float(ticker['percentage']),
+                "spread": (float(ticker['ask']) - float(ticker['bid'])) / float(ticker['last']) * 100,
+                "timestamp": pd.Timestamp.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"خطا در دریافت اطلاعات بازار از Binance: {e}")
+            return {}
