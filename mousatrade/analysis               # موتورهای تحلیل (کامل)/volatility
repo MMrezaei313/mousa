@@ -1,0 +1,116 @@
+"""
+تحلیل نوسان بازار
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, List
+import logging
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class VolatilityRegime(Enum):
+    VERY_LOW = "VERY_LOW"
+    LOW = "LOW"
+    NORMAL = "NORMAL"
+    HIGH = "HIGH"
+    VERY_HIGH = "VERY_HIGH"
+
+class VolatilityAnalyzer:
+    """تحلیل‌گر نوسان"""
+    
+    def __init__(self):
+        self.volatility_periods = {
+            'short_term': 10,
+            'medium_term': 20,
+            'long_term': 50
+        }
+    
+    def analyze_volatility(self, df: pd.DataFrame) -> Dict:
+        """تحلیل کامل نوسان"""
+        try:
+            returns = df['close'].pct_change().dropna()
+            
+            # محاسبه نوسان در دوره‌های مختلف
+            short_vol = returns.tail(self.volatility_periods['short_term']).std()
+            medium_vol = returns.tail(self.volatility_periods['medium_term']).std()
+            long_vol = returns.tail(self.volatility_periods['long_term']).std()
+            
+            # تشخیص رژیم نوسان
+            volatility_regime = self._detect_volatility_regime(short_vol, medium_vol, long_vol)
+            
+            # محاسبه ATR
+            atr = self._calculate_atr(df)
+            
+            # باندهای بولینگر
+            bb_width = self._calculate_bb_width(df)
+            
+            return {
+                "daily_volatility": short_vol,
+                "weekly_volatility": medium_vol,
+                "monthly_volatility": long_vol,
+                "volatility_regime": volatility_regime.value,
+                "atr": atr,
+                "bollinger_band_width": bb_width,
+                "volatility_ratio": short_vol / long_vol if long_vol > 0 else 1.0,
+                "is_volatility_increasing": short_vol > medium_vol
+            }
+            
+        except Exception as e:
+            logger.error(f"خطا در تحلیل نوسان: {e}")
+            return {}
+    
+    def _detect_volatility_regime(self, short_vol: float, 
+                                medium_vol: float, 
+                                long_vol: float) -> VolatilityRegime:
+        """تشخیص رژیم نوسان"""
+        avg_volatility = (short_vol + medium_vol + long_vol) / 3
+        
+        if avg_volatility < 0.01:
+            return VolatilityRegime.VERY_LOW
+        elif avg_volatility < 0.02:
+            return VolatilityRegime.LOW
+        elif avg_volatility < 0.04:
+            return VolatilityRegime.NORMAL
+        elif avg_volatility < 0.08:
+            return VolatilityRegime.HIGH
+        else:
+            return VolatilityRegime.VERY_HIGH
+    
+    def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
+        """محاسبه ATR"""
+        try:
+            high = df['high']
+            low = df['low']
+            close = df['close']
+            
+            tr1 = high - low
+            tr2 = abs(high - close.shift())
+            tr3 = abs(low - close.shift())
+            
+            tr = np.maximum(np.maximum(tr1, tr2), tr3)
+            atr = tr.rolling(period).mean().iloc[-1]
+            
+            return atr
+            
+        except Exception as e:
+            logger.warning(f"خطا در محاسبه ATR: {e}")
+            return 0.0
+    
+    def _calculate_bb_width(self, df: pd.DataFrame, period: int = 20, std: int = 2) -> float:
+        """محاسبه عرض باندهای بولینگر"""
+        try:
+            close = df['close']
+            sma = close.rolling(period).mean()
+            rolling_std = close.rolling(period).std()
+            
+            bb_upper = sma + (rolling_std * std)
+            bb_lower = sma - (rolling_std * std)
+            bb_width = (bb_upper - bb_lower) / sma
+            
+            return bb_width.iloc[-1]
+            
+        except Exception as e:
+            logger.warning(f"خطا در محاسبه باندهای بولینگر: {e}")
+            return 0.0
