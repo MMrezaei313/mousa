@@ -1,0 +1,138 @@
+"""
+تشخیص رژیم بازار
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, List
+import logging
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class MarketRegime(Enum):
+    BULL_TREND = "BULL_TREND"          # روند صعودی
+    BEAR_TREND = "BEAR_TREND"          # روند نزولی  
+    SIDEWAYS = "SIDEWAYS"              # رنج
+    HIGH_VOLATILITY = "HIGH_VOLATILITY" # نوسان بالا
+    LOW_VOLATILITY = "LOW_VOLATILITY"   # نوسان پایین
+    BREAKOUT = "BREAKOUT"              # شکست
+    REVERSAL = "REVERSAL"              # بازگشت
+
+class MarketRegimeAnalyzer:
+    """تحلیل‌گر رژیم بازار"""
+    
+    def __init__(self):
+        self.regime_history = []
+    
+    def detect_regime(self, df: pd.DataFrame, 
+                     technical_analysis: Dict,
+                     volatility_analysis: Dict) -> Dict:
+        """تشخیص رژیم بازار"""
+        try:
+            # تحلیل روند
+            trend_strength = technical_analysis.get('trend', {}).get('strength', 0.5)
+            trend_direction = technical_analysis.get('trend', {}).get('direction', 'NEUTRAL')
+            
+            # تحلیل نوسان
+            volatility_regime = volatility_analysis.get('volatility_regime', 'NORMAL')
+            is_volatility_increasing = volatility_analysis.get('is_volatility_increasing', False)
+            
+            # تشخیص رژیم
+            regime = self._determine_regime(trend_strength, trend_direction, 
+                                          volatility_regime, is_volatility_increasing)
+            
+            # اطمینان از تشخیص
+            confidence = self._calculate_regime_confidence(trend_strength, volatility_regime)
+            
+            # مدت رژیم
+            duration = self._estimate_regime_duration(regime)
+            
+            return {
+                "regime": regime.value,
+                "confidence": confidence,
+                "duration_days": duration,
+                "trend_strength": trend_strength,
+                "volatility_regime": volatility_regime,
+                "description": self._get_regime_description(regime)
+            }
+            
+        except Exception as e:
+            logger.error(f"خطا در تشخیص رژیم بازار: {e}")
+            return {}
+    
+    def _determine_regime(self, trend_strength: float,
+                         trend_direction: str,
+                         volatility_regime: str,
+                         is_volatility_increasing: bool) -> MarketRegime:
+        """تعیین رژیم بازار"""
+        
+        # روندهای قوی
+        if trend_strength > 0.7:
+            if trend_direction == "صعودی":
+                return MarketRegime.BULL_TREND
+            else:
+                return MarketRegime.BEAR_TREND
+        
+        # نوسان بالا
+        if volatility_regime in ['HIGH', 'VERY_HIGH']:
+            return MarketRegime.HIGH_VOLATILITY
+        
+        # نوسان پایین
+        if volatility_regime in ['LOW', 'VERY_LOW']:
+            return MarketRegime.LOW_VOLATILITY
+        
+        # روندهای ضعیف - بازار رنج
+        if trend_strength < 0.3:
+            return MarketRegime.SIDEWAYS
+        
+        # افزایش نوسان ممکن است نشانه شکست باشد
+        if is_volatility_increasing and trend_strength > 0.5:
+            return MarketRegime.BREAKOUT
+        
+        return MarketRegime.SIDEWAYS
+    
+    def _calculate_regime_confidence(self, trend_strength: float,
+                                   volatility_regime: str) -> float:
+        """محاسبه اطمینان از تشخیص رژیم"""
+        confidence = 0.5
+        
+        # افزایش اطمینان بر اساس قدرت روند
+        if trend_strength > 0.7:
+            confidence += 0.3
+        elif trend_strength < 0.3:
+            confidence += 0.2
+        
+        # افزایش اطمینان بر اساس نوسان شدید
+        if volatility_regime in ['VERY_LOW', 'VERY_HIGH']:
+            confidence += 0.2
+        
+        return min(confidence, 0.95)
+    
+    def _estimate_regime_duration(self, regime: MarketRegime) -> int:
+        """تخمین مدت رژیم"""
+        duration_map = {
+            MarketRegime.BULL_TREND: 14,
+            MarketRegime.BEAR_TREND: 14,
+            MarketRegime.SIDEWAYS: 7,
+            MarketRegime.HIGH_VOLATILITY: 5,
+            MarketRegime.LOW_VOLATILITY: 10,
+            MarketRegime.BREAKOUT: 3,
+            MarketRegime.REVERSAL: 2
+        }
+        
+        return duration_map.get(regime, 7)
+    
+    def _get_regime_description(self, regime: MarketRegime) -> str:
+        """دریافت توضیحات رژیم"""
+        descriptions = {
+            MarketRegime.BULL_TREND: "روند صعودی قوی - مناسب برای معاملات لانگ",
+            MarketRegime.BEAR_TREND: "روند نزولی قوی - مناسب برای معاملات شورت",
+            MarketRegime.SIDEWAYS: "بازار در حالت رنج - مناسب برای معاملات رنج",
+            MarketRegime.HIGH_VOLATILITY: "نوسان بالا - احتیاط در معاملات",
+            MarketRegime.LOW_VOLATILITY: "نوسان پایین - مناسب برای معاملات Breakout",
+            MarketRegime.BREAKOUT: "احتمال شکست - آماده برای حرکت بزرگ",
+            MarketRegime.REVERSAL: "احتمال بازگشت - مراقب تغییر روند باشید"
+        }
+        
+        return descriptions.get(regime, "وضعیت نامشخص")
