@@ -1,0 +1,120 @@
+"""
+کلاس پایه برای تمام بروکرها
+"""
+
+import abc
+import pandas as pd
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
+
+class BaseBroker(abc.ABC):
+    """کلاس پایه برای تمام بروکرهای MousaTrade"""
+    
+    def __init__(self, name: str, api_key: str = None, secret: str = None):
+        self.name = name
+        self.api_key = api_key
+        self.secret = secret
+        self.is_authenticated = False
+        self.supported_pairs = []
+        
+    @abc.abstractmethod
+    def authenticate(self) -> bool:
+        """احراز هویت با بروکر"""
+        pass
+    
+    @abc.abstractmethod
+    def get_historical_data(self, symbol: str, timeframe: str, 
+                          days: int = 30) -> pd.DataFrame:
+        """دریافت داده‌های تاریخی"""
+        pass
+    
+    @abc.abstractmethod
+    def get_current_price(self, symbol: str) -> float:
+        """دریافت قیمت فعلی"""
+        pass
+    
+    @abc.abstractmethod
+    def get_market_info(self, symbol: str) -> Dict:
+        """دریافت اطلاعات بازار"""
+        pass
+    
+    def get_historical_data_with_indicators(self, symbol: str, timeframe: str, 
+                                          days: int = 30) -> pd.DataFrame:
+        """دریافت داده‌های تاریخی با ایندیکاتورهای پایه"""
+        try:
+            df = self.get_historical_data(symbol, timeframe, days)
+            
+            # اضافه کردن ایندیکاتورهای پایه
+            if len(df) > 0:
+                df = self._add_basic_indicators(df)
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"خطا در دریافت داده‌های تاریخی {symbol}: {e}")
+            return pd.DataFrame()
+    
+    def _add_basic_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """اضافه کردن ایندیکاتورهای پایه به داده‌ها"""
+        try:
+            # میانگین متحرک ساده
+            df['sma_20'] = df['close'].rolling(window=20).mean()
+            df['sma_50'] = df['close'].rolling(window=50).mean()
+            
+            # RSI
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            df['rsi'] = 100 - (100 / (1 + rs))
+            
+            # حجم متوسط
+            df['volume_sma_20'] = df['volume'].rolling(window=20).mean()
+            
+            # نوسان
+            df['volatility'] = df['close'].pct_change().rolling(window=20).std()
+            
+            return df
+            
+        except Exception as e:
+            logger.warning(f"خطا در محاسبه ایندیکاتورهای پایه: {e}")
+            return df
+    
+    def get_supported_pairs(self) -> List[str]:
+        """دریافت جفت‌ارزهای پشتیبانی شده"""
+        return self.supported_pairs
+    
+    def health_check(self) -> Dict:
+        """بررسی سلامت اتصال به بروکر"""
+        try:
+            # تست دریافت قیمت بیت‌کوین
+            btc_price = self.get_current_price('BTC/USDT')
+            
+            return {
+                "status": "connected" if btc_price > 0 else "disconnected",
+                "broker": self.name,
+                "timestamp": datetime.now().isoformat(),
+                "response_time": 0.1,  # شبیه‌سازی
+                "supported_pairs_count": len(self.supported_pairs)
+            }
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "broker": self.name,
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+    
+    def get_account_balance(self) -> Dict:
+        """دریافت موجودی حساب (برای نمایش اطلاعات)"""
+        # در حالت مشاور، فقط برای نمایش اطلاعات استفاده می‌شود
+        return {
+            "broker": self.name,
+            "total_balance": 0,
+            "available_balance": 0,
+            "currencies": []
+        }
