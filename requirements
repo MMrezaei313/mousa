@@ -1,0 +1,46 @@
+# Core Framework
+flask==2.3.3
+flask-cors==4.0.0
+flask-jwt-extended==4.5.3
+
+# Data Analysis
+pandas==2.0.3
+numpy==1.24.3
+scipy==1.10.1
+
+# Technical Analysis
+ta-lib==0.4.26
+ccxt==4.1.0
+
+# Machine Learning & AI
+scikit-learn==1.3.0
+tensorflow==2.13.0
+keras==2.13.1
+
+# Natural Language Processing
+textblob==0.17.1
+nltk==3.8.1
+beautifulsoup4==4.12.2
+requests==2.31.0
+
+# Data Visualization
+plotly==5.15.0
+matplotlib==3.7.2
+
+# Database & Caching
+sqlalchemy==2.0.21
+redis==5.0.1
+
+# Utilities
+python-dotenv==1.0.0
+gunicorn==21.2.0
+celery==5.3.4
+
+# Development
+pytest==7.4.2
+black==23.7.0
+flake8==6.1.0
+
+# Async
+aiohttp==3.8.5
+asyncio==3.4.3
