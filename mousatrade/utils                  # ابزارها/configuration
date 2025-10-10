@@ -1,0 +1,61 @@
+"""
+ابزارهای پیکربندی
+"""
+
+import json
+import os
+from pathlib import Path
+from typing import Dict, Any
+
+class ConfigManager:
+    """مدیریت تنظیمات"""
+    
+    def __init__(self, config_path: str = "config/config.json"):
+        self.config_path = Path(config_path)
+        self.config = self._load_config()
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """بارگذاری تنظیمات از فایل"""
+        if self.config_path.exists():
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        else:
+            return self._get_default_config()
+    
+    def _get_default_config(self) -> Dict[str, Any]:
+        """تنظیمات پیش‌فرض"""
+        return {
+            "app": {
+                "name": "MousaTrade",
+                "version": "1.0.0",
+                "debug": True,
+                "port": 5000
+            },
+            "analysis": {
+                "default_timeframe": "1h",
+                "max_history_days": 365
+            },
+            "risk_management": {
+                "max_position_size": 0.1,
+                "max_daily_loss": 0.05
+            }
+        }
+    
+    def get(self, key: str, default=None):
+        """دریافت مقدار از تنظیمات"""
+        keys = key.split('.')
+        value = self.config
+        
+        for k in keys:
+            if isinstance(value, dict) and k in value:
+                value = value[k]
+            else:
+                return default
+        
+        return value
+    
+    def save(self):
+        """ذخیره تنظیمات"""
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.config_path, 'w', encoding='utf-8') as f:
+            json.dump(self.config, f, indent=4, ensure_ascii=False)
