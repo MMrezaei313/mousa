@@ -1,0 +1,438 @@
+"""
+ماژول معیار کلی (Kelly Criterion) برای مدیریت سرمایه پیشرفته
+"""
+
+import numpy as np
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+import logging
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class KellyMethod(Enum):
+    SIMPLE = "SIMPLE"              # فرمول ساده کلی
+    OPTIMAL = "OPTIMAL"            # فرمول بهینه کلی
+    FRACTIONAL = "FRACTIONAL"      # کلی کسری
+    MULTIPLE_BET = "MULTIPLE_BET"  # چند شرطی
+
+@dataclass
+class KellyAnalysis:
+    """تحلیل معیار کلی"""
+    full_kelly: float
+    half_kelly: float
+    quarter_kelly: float
+    eighth_kelly: float
+    suggested_fraction: float
+    win_probability: float
+    loss_probability: float
+    win_loss_ratio: float
+    edge: float
+    odds: float
+    expected_value: float
+    variance: float
+    optimal_growth: float
+    risk_of_ruin: float
+
+@dataclass
+class MultipleBetKelly:
+    """کلی برای چند شرط همزمان"""
+    covariance_matrix: np.ndarray
+    expected_returns: np.ndarray
+    optimal_fractions: np.ndarray
+    portfolio_growth: float
+
+class KellyCalculator:
+    """ماشین حساب معیار کلی پیشرفته"""
+    
+    def __init__(self):
+        self.min_probability = 0.001
+        self.max_probability = 0.999
+        self.max_leverage = 10.0
+    
+    def calculate_simple_kelly(self, 
+                             win_probability: float,
+                             win_payout: float,
+                             loss_payout: float = 1.0) -> KellyAnalysis:
+        """محاسبه کلی ساده برای شرط دو حالته"""
+        try:
+            # اعتبارسنجی ورودی‌ها
+            win_probability = np.clip(win_probability, self.min_probability, self.max_probability)
+            loss_probability = 1 - win_probability
+            
+            if win_payout <= 0 or loss_payout <= 0:
+                raise ValueError("مقادیر پرداخت باید بزرگتر از صفر باشند")
+            
+            # محاسبه edge و odds
+            edge = (win_probability * win_payout) - (loss_probability * loss_payout)
+            odds = win_payout / loss_payout if loss_payout > 0 else float('inf')
+            
+            # فرمول کلی ساده
+            if odds > 0:
+                full_kelly = (win_probability * odds - loss_probability) / odds
+            else:
+                full_kelly = 0.0
+            
+            # محدود کردن به محدوده معقول
+            full_kelly = np.clip(full_kelly, 0.0, self.max_leverage)
+            
+            # محاسبه انواع کلی
+            half_kelly = full_kelly / 2
+            quarter_kelly = full_kelly / 4
+            eighth_kelly = full_kelly / 8
+            
+            # پیشنهاد fraction (استفاده از نصف کلی برای محافظه‌کاری)
+            suggested_fraction = half_kelly
+            
+            # محاسبه ارزش مورد انتظار
+            expected_value = win_probability * win_payout - loss_probability * loss_payout
+            
+            # محاسبه واریانس
+            variance = (win_probability * (win_payout - expected_value)**2 + 
+                       loss_probability * (-loss_payout - expected_value)**2)
+            
+            # محاسبه رشد بهینه
+            optimal_growth = self._calculate_optimal_growth(
+                win_probability, win_payout, loss_payout, full_kelly
+            )
+            
+            # محاسبه ریسک ورشکستگی
+            risk_of_ruin = self._calculate_risk_of_ruin(
+                win_probability, full_kelly, win_payout, loss_payout
+            )
+            
+            return KellyAnalysis(
+                full_kelly=full_kelly,
+                half_kelly=half_kelly,
+                quarter_kelly=quarter_kelly,
+                eighth_kelly=eighth_kelly,
+                suggested_fraction=suggested_fraction,
+                win_probability=win_probability,
+                loss_probability=loss_probability,
+                win_loss_ratio=odds,
+                edge=edge,
+                odds=odds,
+                expected_value=expected_value,
+                variance=variance,
+                optimal_growth=optimal_growth,
+                risk_of_ruin=risk_of_ruin
+            )
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه کلی ساده: {e}")
+            return self._get_default_analysis()
+    
+    def calculate_optimal_kelly(self,
+                              returns: np.ndarray,
+                              initial_wealth: float = 1.0) -> KellyAnalysis:
+        """محاسبه کلی بهینه برای توزیع بازدهی دلخواه"""
+        try:
+            if len(returns) == 0:
+                return self._get_default_analysis()
+            
+            # محاسبه میانگین و واریانس بازدهی
+            mean_return = np.mean(returns)
+            variance_return = np.var(returns)
+            
+            if variance_return <= 0:
+                return self._get_default_analysis()
+            
+            # فرمول کلی بهینه برای توزیع نرمال
+            full_kelly = mean_return / variance_return
+            
+            # محدود کردن به محدوده معقول
+            full_kelly = np.clip(full_kelly, 0.0, self.max_leverage)
+            
+            # محاسبه انواع کلی
+            half_kelly = full_kelly / 2
+            quarter_kelly = full_kelly / 4
+            eighth_kelly = full_kelly / 8
+            
+            # پیشنهاد fraction
+            suggested_fraction = half_kelly
+            
+            # محاسبه رشد بهینه
+            optimal_growth = mean_return * full_kelly - 0.5 * variance_return * full_kelly**2
+            
+            # تخمین win probability از بازدهی
+            win_probability = np.mean(returns > 0)
+            loss_probability = 1 - win_probability
+            
+            # محاسبه نسبت سود به ضرر
+            positive_returns = returns[returns > 0]
+            negative_returns = returns[returns < 0]
+            
+            avg_win = np.mean(positive_returns) if len(positive_returns) > 0 else 0
+            avg_loss = abs(np.mean(negative_returns)) if len(negative_returns) > 0 else 1
+            win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else float('inf')
+            
+            return KellyAnalysis(
+                full_kelly=full_kelly,
+                half_kelly=half_kelly,
+                quarter_kelly=quarter_kelly,
+                eighth_kelly=eighth_kelly,
+                suggested_fraction=suggested_fraction,
+                win_probability=win_probability,
+                loss_probability=loss_probability,
+                win_loss_ratio=win_loss_ratio,
+                edge=mean_return,
+                odds=win_loss_ratio,
+                expected_value=mean_return,
+                variance=variance_return,
+                optimal_growth=optimal_growth,
+                risk_of_ruin=self._calculate_risk_of_ruin_continuous(win_probability, full_kelly)
+            )
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه کلی بهینه: {e}")
+            return self._get_default_analysis()
+    
+    def calculate_multiple_bet_kelly(self,
+                                   win_probabilities: np.ndarray,
+                                   payoffs: np.ndarray,
+                                   correlation_matrix: np.ndarray) -> MultipleBetKelly:
+        """محاسبه کلی برای چند شرط همزمان"""
+        try:
+            n = len(win_probabilities)
+            
+            if n != len(payoffs) or correlation_matrix.shape != (n, n):
+                raise ValueError("ابعاد ورودی‌ها ناسازگار هستند")
+            
+            # محاسبه بازدهی مورد انتظار برای هر شرط
+            expected_returns = np.array([
+                p * payoffs[i] - (1 - p) * 1.0  # فرض ضرر 1 واحد
+                for i, p in enumerate(win_probabilities)
+            ])
+            
+            # محاسبه ماتریس کوواریانس
+            covariance_matrix = self._calculate_covariance_matrix(
+                win_probabilities, payoffs, correlation_matrix
+            )
+            
+            # حل مسئله بهینه‌سازی برای پیدا کردن کسرهای بهینه
+            try:
+                # استفاده از معکوس ماتریس کوواریانس
+                inv_covariance = np.linalg.inv(covariance_matrix)
+                optimal_fractions = inv_covariance @ expected_returns
+                
+                # محدود کردن به اعداد مثبت
+                optimal_fractions = np.maximum(optimal_fractions, 0)
+                
+                # نرمالایز کردن اگر مجموع بیشتر از 1 شود
+                if np.sum(optimal_fractions) > 1:
+                    optimal_fractions = optimal_fractions / np.sum(optimal_fractions)
+                
+            except np.linalg.LinAlgError:
+                # اگر ماتریس معکوس‌پذیر نباشد، از روش ساده استفاده کن
+                optimal_fractions = expected_returns / np.sum(np.abs(expected_returns))
+                optimal_fractions = np.maximum(optimal_fractions, 0)
+            
+            # محاسبه رشد پرتفوی
+            portfolio_growth = expected_returns @ optimal_fractions - 0.5 * optimal_fractions @ covariance_matrix @ optimal_fractions
+            
+            return MultipleBetKelly(
+                covariance_matrix=covariance_matrix,
+                expected_returns=expected_returns,
+                optimal_fractions=optimal_fractions,
+                portfolio_growth=portfolio_growth
+            )
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه کلی چند شرطی: {e}")
+            return self._get_default_multiple_bet(len(win_probabilities))
+    
+    def calculate_from_trading_history(self,
+                                     trades: List[Dict]) -> KellyAnalysis:
+        """محاسبه کلی از تاریخچه معاملات"""
+        try:
+            if not trades:
+                return self._get_default_analysis()
+            
+            # استخراج سود/ضررها
+            pnls = []
+            for trade in trades:
+                pnl = trade.get('pnl')
+                if pnl is not None:
+                    pnls.append(pnl)
+            
+            if not pnls:
+                return self._get_default_analysis()
+            
+            # تبدیل به بازدهی
+            returns = np.array(pnls)
+            
+            return self.calculate_optimal_kelly(returns)
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه کلی از تاریخچه معاملات: {e}")
+            return self._get_default_analysis()
+    
+    def calculate_fractional_kelly(self,
+                                 full_kelly: float,
+                                 risk_aversion: float = 2.0) -> float:
+        """محاسبه کلی کسری"""
+        # فرمول کلی کسری: f* = f_full / A
+        # که A ضریب ریسک‌گریزی است
+        fractional_kelly = full_kelly / risk_aversion
+        return np.clip(fractional_kelly, 0.0, self.max_leverage)
+    
+    def calculate_dynamic_kelly(self,
+                              current_wealth: float,
+                              target_wealth: float,
+                              time_horizon: int,
+                              base_kelly: float) -> float:
+        """محاسبه کلی پویا بر اساس ثروت فعلی و هدف"""
+        try:
+            # اگر ثروت فعلی نزدیک به هدف باشد، ریسک را کاهش بده
+            wealth_ratio = current_wealth / target_wealth
+            
+            if wealth_ratio >= 1.0:
+                # اگر به هدف رسیده‌ای، ریسک بسیار کم
+                return base_kelly * 0.1
+            elif wealth_ratio >= 0.8:
+                # اگر نزدیک به هدف هستی، ریسک متوسط
+                return base_kelly * 0.5
+            elif wealth_ratio <= 0.5:
+                # اگر خیلی دور از هدف هستی، ریسک بیشتر
+                return base_kelly * 1.5
+            else:
+                # حالت نرمال
+                return base_kelly
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه کلی پویا: {e}")
+            return base_kelly
+    
+    def validate_kelly_fraction(self, fraction: float, 
+                              account_balance: float,
+                              min_bet_size: float = 10) -> Tuple[bool, str]:
+        """اعتبارسنجی کسر کلی"""
+        if fraction < 0:
+            return False, "کسر کلی نمی‌تواند منفی باشد"
+        
+        if fraction > self.max_leverage:
+            return False, f"کسر کلی نمی‌تواند بیشتر از {self.max_leverage} باشد"
+        
+        min_fraction = min_bet_size / account_balance
+        if fraction < min_fraction and fraction > 0:
+            return False, f"کسر کلی کمتر از حداقل شرط است (>{min_fraction:.6f})"
+        
+        if fraction > 0.5:
+            return False, "کسر کلی بسیار بالا است (ریسک بسیار زیاد)"
+        
+        return True, "کسر کلی معتبر است"
+    
+    def get_risk_adjusted_fraction(self, full_kelly: float,
+                                 risk_profile: str = "MODERATE") -> float:
+        """دریافت کسر تعدیل‌شده بر اساس پروفایل ریسک"""
+        multipliers = {
+            "ULTRA_CONSERVATIVE": 0.125,  # 1/8 کلی
+            "VERY_CONSERVATIVE": 0.25,    # 1/4 کلی
+            "CONSERVATIVE": 0.375,        # 3/8 کلی
+            "MODERATE": 0.5,              # 1/2 کلی
+            "AGGRESSIVE": 0.75,           # 3/4 کلی
+            "VERY_AGGRESSIVE": 0.875,     # 7/8 کلی
+            "FULL_KELLY": 1.0             # کلی کامل
+        }
+        
+        multiplier = multipliers.get(risk_profile, 0.5)
+        adjusted_fraction = full_kelly * multiplier
+        
+        return np.clip(adjusted_fraction, 0.0, self.max_leverage)
+    
+    def _calculate_optimal_growth(self, win_prob: float, win_pay: float,
+                                loss_pay: float, fraction: float) -> float:
+        """محاسبه رشد بهینه"""
+        if fraction <= 0:
+            return 0.0
+        
+        growth_rate = (win_prob * np.log(1 + fraction * win_pay) + 
+                      (1 - win_prob) * np.log(1 - fraction * loss_pay))
+        
+        return growth_rate
+    
+    def _calculate_risk_of_ruin(self, win_prob: float, fraction: float,
+                              win_pay: float, loss_pay: float) -> float:
+        """محاسبه ریسک ورشکستگی"""
+        if fraction <= 0:
+            return 0.0
+        
+        # فرمول ساده برای ریسک ورشکستگی
+        q = 1 - win_prob
+        p = win_prob
+        
+        if p <= q:
+            return 1.0
+        
+        # برای شرط‌های با پرداخت 1:1
+        if abs(win_pay - loss_pay) < 0.001:
+            risk_ruin = ((q / p) ** (1 / fraction)) if fraction > 0 else 1.0
+        else:
+            # فرمول عمومی
+            try:
+                risk_ruin = ((1 - p * win_pay / loss_pay) / 
+                            (1 - (q / p) * (win_pay / loss_pay))) ** (1 / fraction)
+            except:
+                risk_ruin = 0.5
+        
+        return min(risk_ruin, 1.0)
+    
+    def _calculate_risk_of_ruin_continuous(self, win_prob: float, fraction: float) -> float:
+        """محاسبه ریسک ورشکستگی برای شرط‌های پیوسته"""
+        if win_prob <= 0.5 or fraction <= 0:
+            return 0.5
+        
+        # فرمول ساده‌شده
+        risk_ruin = np.exp(-2 * win_prob * fraction)
+        return min(risk_ruin, 1.0)
+    
+    def _calculate_covariance_matrix(self, win_probs: np.ndarray,
+                                  payoffs: np.ndarray,
+                                  correlation_matrix: np.ndarray) -> np.ndarray:
+        """محاسبه ماتریس کوواریانس"""
+        n = len(win_probs)
+        covariance = np.zeros((n, n))
+        
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    # واریانس
+                    p = win_probs[i]
+                    covariance[i, j] = p * (payoffs[i]**2) + (1 - p) * (1**2) - (p * payoffs[i] - (1 - p))**2
+                else:
+                    # کوواریانس
+                    cov_ij = correlation_matrix[i, j] * np.sqrt(covariance[i, i] * covariance[j, j])
+                    covariance[i, j] = cov_ij
+        
+        return covariance
+    
+    def _get_default_analysis(self) -> KellyAnalysis:
+        """تحلیل پیش‌فرض"""
+        return KellyAnalysis(
+            full_kelly=0.1,
+            half_kelly=0.05,
+            quarter_kelly=0.025,
+            eighth_kelly=0.0125,
+            suggested_fraction=0.05,
+            win_probability=0.5,
+            loss_probability=0.5,
+            win_loss_ratio=1.0,
+            edge=0.0,
+            odds=1.0,
+            expected_value=0.0,
+            variance=0.01,
+            optimal_growth=0.0,
+            risk_of_ruin=0.5
+        )
+    
+    def _get_default_multiple_bet(self, n: int) -> MultipleBetKelly:
+        """چند شرطی پیش‌فرض"""
+        return MultipleBetKelly(
+            covariance_matrix=np.eye(n),
+            expected_returns=np.zeros(n),
+            optimal_fractions=np.ones(n) / n,
+            portfolio_growth=0.0
+        )
+
+# نمونه global برای استفاده آسان
+kelly_calculator = KellyCalculator()
