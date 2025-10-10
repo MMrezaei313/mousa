@@ -1,0 +1,17 @@
+"""
+ماژول ذخیره‌سازی داده‌ها
+"""
+
+from mousatrade.persistence.models import (
+    AnalysisResult,
+    TradeAdvice, 
+    MarketData,
+    DataStorage
+)
+
+__all__ = [
+    'AnalysisResult',
+    'TradeAdvice',
+    'MarketData',
+    'DataStorage'
+]
