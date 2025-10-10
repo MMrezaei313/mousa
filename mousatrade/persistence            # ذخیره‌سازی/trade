@@ -1,0 +1,448 @@
+"""
+مدیریت معاملات و تاریخچه ترید
+"""
+
+import json
+import sqlite3
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+import logging
+from dataclasses import dataclass
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class TradeStatus(Enum):
+    PENDING = "PENDING"
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+    CANCELLED = "CANCELLED"
+
+class TradeType(Enum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+
+@dataclass
+class Trade:
+    """مدل معامله"""
+    id: Optional[int]
+    symbol: str
+    trade_type: TradeType
+    entry_price: float
+    stop_loss: float
+    take_profit: List[float]
+    position_size: float
+    risk_reward_ratio: float
+    confidence: float
+    status: TradeStatus
+    entry_time: datetime
+    exit_time: Optional[datetime]
+    exit_price: Optional[float]
+    pnl: Optional[float]
+    pnl_percentage: Optional[float]
+    reasoning: Dict
+    tags: List[str]
+    
+    def to_dict(self) -> Dict:
+        """تبدیل به دیکشنری"""
+        return {
+            "id": self.id,
+            "symbol": self.symbol,
+            "trade_type": self.trade_type.value,
+            "entry_price": self.entry_price,
+            "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit,
+            "position_size": self.position_size,
+            "risk_reward_ratio": self.risk_reward_ratio,
+            "confidence": self.confidence,
+            "status": self.status.value,
+            "entry_time": self.entry_time.isoformat(),
+            "exit_time": self.exit_time.isoformat() if self.exit_time else None,
+            "exit_price": self.exit_price,
+            "pnl": self.pnl,
+            "pnl_percentage": self.pnl_percentage,
+            "reasoning": self.reasoning,
+            "tags": self.tags
+        }
+
+class TradeManager:
+    """مدیریت معاملات"""
+    
+    def __init__(self, db_path: str = "data/trades.db"):
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_database()
+    
+    def _init_database(self):
+        """ایجاد دیتابیس"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # ایجاد جدول معاملات
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    trade_type TEXT NOT NULL,
+                    entry_price REAL NOT NULL,
+                    stop_loss REAL NOT NULL,
+                    take_profit TEXT NOT NULL,
+                    position_size REAL NOT NULL,
+                    risk_reward_ratio REAL NOT NULL,
+                    confidence REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    entry_time TEXT NOT NULL,
+                    exit_time TEXT,
+                    exit_price REAL,
+                    pnl REAL,
+                    pnl_percentage REAL,
+                    reasoning TEXT NOT NULL,
+                    tags TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # ایجاد ایندکس‌ها
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_symbol ON trades(symbol)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON trades(status)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_entry_time ON trades(entry_time)')
+            
+            conn.commit()
+            conn.close()
+            logger.info("دیتابیس معاملات راه‌اندازی شد")
+            
+        except Exception as e:
+            logger.error(f"خطا در راه‌اندازی دیتابیس: {e}")
+    
+    def create_trade(self, trade: Trade) -> Optional[int]:
+        """ایجاد معامله جدید"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO trades (
+                    symbol, trade_type, entry_price, stop_loss, take_profit,
+                    position_size, risk_reward_ratio, confidence, status,
+                    entry_time, exit_time, exit_price, pnl, pnl_percentage,
+                    reasoning, tags
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                trade.symbol,
+                trade.trade_type.value,
+                trade.entry_price,
+                trade.stop_loss,
+                json.dumps(trade.take_profit),
+                trade.position_size,
+                trade.risk_reward_ratio,
+                trade.confidence,
+                trade.status.value,
+                trade.entry_time.isoformat(),
+                trade.exit_time.isoformat() if trade.exit_time else None,
+                trade.exit_price,
+                trade.pnl,
+                trade.pnl_percentage,
+                json.dumps(trade.reasoning, ensure_ascii=False),
+                json.dumps(trade.tags, ensure_ascii=False)
+            ))
+            
+            trade_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"معامله جدید ایجاد شد: {trade.symbol} (ID: {trade_id})")
+            return trade_id
+            
+        except Exception as e:
+            logger.error(f"خطا در ایجاد معامله: {e}")
+            return None
+    
+    def get_trade(self, trade_id: int) -> Optional[Trade]:
+        """دریافت معامله بر اساس ID"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT * FROM trades WHERE id = ?', (trade_id,))
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                return self._row_to_trade(row)
+            return None
+            
+        except Exception as e:
+            logger.error(f"خطا در دریافت معامله {trade_id}: {e}")
+            return None
+    
+    def get_open_trades(self, symbol: str = None) -> List[Trade]:
+        """دریافت معاملات باز"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            if symbol:
+                cursor.execute(
+                    'SELECT * FROM trades WHERE status = ? AND symbol = ? ORDER BY entry_time DESC',
+                    (TradeStatus.OPEN.value, symbol)
+                )
+            else:
+                cursor.execute(
+                    'SELECT * FROM trades WHERE status = ? ORDER BY entry_time DESC',
+                    (TradeStatus.OPEN.value,)
+                )
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            return [self._row_to_trade(row) for row in rows]
+            
+        except Exception as e:
+            logger.error(f"خطا در دریافت معاملات باز: {e}")
+            return []
+    
+    def get_trade_history(self, symbol: str = None, 
+                         days: int = 30, 
+                         limit: int = 100) -> List[Trade]:
+        """دریافت تاریخچه معاملات"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            since_date = (datetime.now() - timedelta(days=days)).isoformat()
+            
+            query = '''
+                SELECT * FROM trades 
+                WHERE entry_time >= ? 
+            '''
+            params = [since_date]
+            
+            if symbol:
+                query += ' AND symbol = ?'
+                params.append(symbol)
+            
+            query += ' ORDER BY entry_time DESC LIMIT ?'
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            conn.close()
+            
+            return [self._row_to_trade(row) for row in rows]
+            
+        except Exception as e:
+            logger.error(f"خطا در دریافت تاریخچه معاملات: {e}")
+            return []
+    
+    def update_trade_status(self, trade_id: int, 
+                          status: TradeStatus,
+                          exit_price: float = None,
+                          exit_time: datetime = None) -> bool:
+        """بروزرسانی وضعیت معامله"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # محاسبه PnL اگر معامله بسته شده
+            pnl = None
+            pnl_percentage = None
+            
+            if status == TradeStatus.CLOSED and exit_price is not None:
+                trade = self.get_trade(trade_id)
+                if trade:
+                    if trade.trade_type == TradeType.LONG:
+                        pnl = (exit_price - trade.entry_price) * trade.position_size
+                        pnl_percentage = (exit_price - trade.entry_price) / trade.entry_price
+                    else:  # SHORT
+                        pnl = (trade.entry_price - exit_price) * trade.position_size
+                        pnl_percentage = (trade.entry_price - exit_price) / trade.entry_price
+            
+            cursor.execute('''
+                UPDATE trades 
+                SET status = ?, 
+                    exit_time = ?, 
+                    exit_price = ?, 
+                    pnl = ?, 
+                    pnl_percentage = ?
+                WHERE id = ?
+            ''', (
+                status.value,
+                exit_time.isoformat() if exit_time else datetime.now().isoformat(),
+                exit_price,
+                pnl,
+                pnl_percentage,
+                trade_id
+            ))
+            
+            affected = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            if affected > 0:
+                action = "بسته" if status == TradeStatus.CLOSED else "بروزرسانی"
+                logger.info(f"معامله {trade_id} {action} شد")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"خطا در بروزرسانی معامله {trade_id}: {e}")
+            return False
+    
+    def get_trade_statistics(self, symbol: str = None, 
+                           days: int = 90) -> Dict:
+        """آمار معاملات"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            since_date = (datetime.now() - timedelta(days=days)).isoformat()
+            
+            # معاملات بسته شده در بازه زمانی
+            query = '''
+                SELECT COUNT(*), 
+                       AVG(pnl_percentage),
+                       SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN pnl <= 0 THEN 1 ELSE 0 END),
+                       SUM(pnl),
+                       AVG(confidence)
+                FROM trades 
+                WHERE status = ? AND entry_time >= ?
+            '''
+            params = [TradeStatus.CLOSED.value, since_date]
+            
+            if symbol:
+                query += ' AND symbol = ?'
+                params.append(symbol)
+            
+            cursor.execute(query, params)
+            stats = cursor.fetchone()
+            conn.close()
+            
+            total_trades, avg_pnl_pct, winning_trades, losing_trades, total_pnl, avg_confidence = stats
+            
+            if total_trades == 0:
+                return {
+                    "total_trades": 0,
+                    "win_rate": 0,
+                    "avg_profit": 0,
+                    "total_profit": 0,
+                    "avg_confidence": 0
+                }
+            
+            win_rate = (winning_trades / total_trades) * 100
+            
+            return {
+                "total_trades": total_trades,
+                "winning_trades": winning_trades,
+                "losing_trades": losing_trades,
+                "win_rate": round(win_rate, 1),
+                "avg_profit_percentage": round(avg_pnl_pct * 100, 2) if avg_pnl_pct else 0,
+                "total_profit": round(total_pnl, 2) if total_pnl else 0,
+                "avg_confidence": round(avg_confidence * 100, 1) if avg_confidence else 0,
+                "period_days": days
+            }
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه آمار معاملات: {e}")
+            return {}
+    
+    def get_performance_metrics(self) -> Dict:
+        """معیارهای عملکرد"""
+        stats_30d = self.get_trade_statistics(days=30)
+        stats_90d = self.get_trade_statistics(days=90)
+        
+        open_trades = self.get_open_trades()
+        total_open = len(open_trades)
+        
+        # محاسبه PnL جاری برای معاملات باز
+        current_pnl = 0
+        for trade in open_trades:
+            # اینجا باید قیمت فعلی از بازار گرفته شود
+            # برای سادگی، از entry_price استفاده می‌کنیم
+            current_pnl += 0  # جایگزین با محاسبه واقعی
+        
+        return {
+            "recent_30d": stats_30d,
+            "recent_90d": stats_90d,
+            "open_trades": total_open,
+            "current_pnl": current_pnl,
+            "performance_rating": self._calculate_performance_rating(stats_90d)
+        }
+    
+    def _calculate_performance_rating(self, stats: Dict) -> str:
+        """محاسبه رتبه عملکرد"""
+        if stats.get("total_trades", 0) < 10:
+            return "INSUFFICIENT_DATA"
+        
+        win_rate = stats.get("win_rate", 0)
+        avg_profit = stats.get("avg_profit_percentage", 0)
+        
+        if win_rate >= 60 and avg_profit >= 2:
+            return "EXCELLENT"
+        elif win_rate >= 50 and avg_profit >= 1:
+            return "GOOD"
+        elif win_rate >= 40:
+            return "AVERAGE"
+        else:
+            return "POOR"
+    
+    def _row_to_trade(self, row) -> Trade:
+        """تبدیل ردیف دیتابیس به شی Trade"""
+        return Trade(
+            id=row[0],
+            symbol=row[1],
+            trade_type=TradeType(row[2]),
+            entry_price=row[3],
+            stop_loss=row[4],
+            take_profit=json.loads(row[5]),
+            position_size=row[6],
+            risk_reward_ratio=row[7],
+            confidence=row[8],
+            status=TradeStatus(row[9]),
+            entry_time=datetime.fromisoformat(row[10]),
+            exit_time=datetime.fromisoformat(row[11]) if row[11] else None,
+            exit_price=row[12],
+            pnl=row[13],
+            pnl_percentage=row[14],
+            reasoning=json.loads(row[15]),
+            tags=json.loads(row[16])
+        )
+    
+    def export_trades(self, file_path: str, format: str = "json") -> bool:
+        """خروجی گرفتن از معاملات"""
+        try:
+            trades = self.get_trade_history(days=365, limit=1000)
+            
+            if format == "json":
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump([trade.to_dict() for trade in trades], f, 
+                             indent=2, ensure_ascii=False)
+            elif format == "csv":
+                import csv
+                with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        'ID', 'Symbol', 'Type', 'Entry Price', 'Exit Price',
+                        'PNL', 'PNL %', 'Status', 'Entry Time', 'Exit Time'
+                    ])
+                    for trade in trades:
+                        writer.writerow([
+                            trade.id, trade.symbol, trade.trade_type.value,
+                            trade.entry_price, trade.exit_price or '',
+                            trade.pnl or '', trade.pnl_percentage or '',
+                            trade.status.value, trade.entry_time.isoformat(),
+                            trade.exit_time.isoformat() if trade.exit_time else ''
+                        ])
+            
+            logger.info(f"معاملات به {file_path} export شدند")
+            return True
+            
+        except Exception as e:
+            logger.error(f"خطا در export معاملات: {e}")
+            return False
+
+# نمونه global
+trade_manager = TradeManager()
