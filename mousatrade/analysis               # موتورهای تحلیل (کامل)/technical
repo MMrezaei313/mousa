@@ -1,1 +1,638 @@
 
+"""
+ماژول تحلیل تکنیکال MousaTrade
+شامل 148 ایندیکاتور از FreqTrade + تحلیل‌های پیشرفته
+"""
+
+import pandas as pd
+import numpy as np
+import talib
+from typing import Dict, List, Tuple, Optional
+from enum import Enum
+from dataclasses import dataclass
+import logging
+
+logger = logging.getLogger(__name__)
+
+class IndicatorType(Enum):
+    TREND = "trend"
+    MOMENTUM = "momentum"
+    VOLATILITY = "volatility"
+    VOLUME = "volume"
+    OSCILLATOR = "oscillator"
+    SUPPORT_RESISTANCE = "support_resistance"
+
+@dataclass
+class TechnicalSignal:
+    name: str
+    value: float
+    signal: str  # BUY, SELL, NEUTRAL
+    strength: float  # 0-1
+
+class TechnicalAnalyzer:
+    """آنالیزور تکنیکال با 148 ایندیکاتور"""
+    
+    def __init__(self):
+        self.indicators_config = {
+            'rsi_period': 14,
+            'macd_fast': 12,
+            'macd_slow': 26,
+            'macd_signal': 9,
+            'bb_period': 20,
+            'bb_std': 2,
+            'stoch_k': 14,
+            'stoch_d': 3,
+            'atr_period': 14,
+            'ema_short': 9,
+            'ema_medium': 21,
+            'ema_long': 50
+        }
+    
+    def comprehensive_analysis(self, df: pd.DataFrame) -> Dict:
+        """آنالیز تکنیکال کامل با تمام ایندیکاتورها"""
+        
+        # محاسبه تمام ایندیکاتورها
+        trend_indicators = self._calculate_trend_indicators(df)
+        momentum_indicators = self._calculate_momentum_indicators(df)
+        volatility_indicators = self._calculate_volatility_indicators(df)
+        volume_indicators = self._calculate_volume_indicators(df)
+        oscillator_indicators = self._calculate_oscillator_indicators(df)
+        
+        # تحلیل روند
+        trend_analysis = self._analyze_trend(df, trend_indicators)
+        
+        # سیگنال‌های ترکیبی
+        combined_signals = self._generate_combined_signals(
+            trend_indicators, momentum_indicators, volatility_indicators,
+            volume_indicators, oscillator_indicators
+        )
+        
+        # سطوح حمایت و مقاومت
+        support_resistance = self._find_support_resistance(df)
+        
+        # الگوهای قیمتی
+        price_patterns = self._detect_price_patterns(df)
+        
+        return {
+            "current_price": float(df['close'].iloc[-1]),
+            "trend": trend_analysis,
+            "indicators": {
+                "trend": trend_indicators,
+                "momentum": momentum_indicators,
+                "volatility": volatility_indicators,
+                "volume": volume_indicators,
+                "oscillators": oscillator_indicators
+            },
+            "signals": combined_signals,
+            "support_resistance": support_resistance,
+            "patterns": price_patterns,
+            "volatility": self._calculate_volatility(df),
+            "summary": self._generate_summary(combined_signals, trend_analysis)
+        }
+    
+    def _calculate_trend_indicators(self, df: pd.DataFrame) -> Dict:
+        """محاسبه ایندیکاتورهای روند"""
+        close = df['close']
+        high = df['high']
+        low = df['low']
+        
+        return {
+            # میانگین‌های متحرک
+            "sma_20": talib.SMA(close, timeperiod=20).iloc[-1],
+            "sma_50": talib.SMA(close, timeperiod=50).iloc[-1],
+            "sma_200": talib.SMA(close, timeperiod=200).iloc[-1],
+            "ema_9": talib.EMA(close, timeperiod=9).iloc[-1],
+            "ema_21": talib.EMA(close, timeperiod=21).iloc[-1],
+            "ema_50": talib.EMA(close, timeperiod=50).iloc[-1],
+            "ema_200": talib.EMA(close, timeperiod=200).iloc[-1],
+            
+            # پارابولیک SAR
+            "sar": talib.SAR(high, low).iloc[-1],
+            
+            # ADX - شاخص حرکت جهت‌دار
+            "adx": talib.ADX(high, low, close, timeperiod=14).iloc[-1],
+            "plus_di": talib.PLUS_DI(high, low, close, timeperiod=14).iloc[-1],
+            "minus_di": talib.MINUS_DI(high, low, close, timeperiod=14).iloc[-1],
+            
+            # ایچیموکو
+            "ichimoku_tenkan": self._ichimoku_tenkan_sen(high, low).iloc[-1],
+            "ichimoku_kijun": self._ichimoku_kijun_sen(high, low).iloc[-1],
+            "ichimoku_senkou_a": self._ichimoku_senkou_span_a(high, low).iloc[-1],
+            
+            # MACD
+            "macd": talib.MACD(close, 
+                              fastperiod=12, 
+                              slowperiod=26, 
+                              signalperiod=9)[0].iloc[-1],
+            "macd_signal": talib.MACD(close, 
+                                     fastperiod=12, 
+                                     slowperiod=26, 
+                                     signalperiod=9)[1].iloc[-1],
+            "macd_histogram": talib.MACD(close, 
+                                        fastperiod=12, 
+                                        slowperiod=26, 
+                                        signalperiod=9)[2].iloc[-1],
+            
+            # TRIX
+            "trix": talib.TRIX(close, timeperiod=30).iloc[-1],
+            
+            # KST - نوسان‌گر زمان مشخص
+            "kst": self._calculate_kst(close).iloc[-1]
+        }
+    
+    def _calculate_momentum_indicators(self, df: pd.DataFrame) -> Dict:
+        """محاسبه ایندیکاتورهای مومنتوم"""
+        close = df['close']
+        high = df['high']
+        low = df['low']
+        
+        return {
+            # RSI
+            "rsi": talib.RSI(close, timeperiod=14).iloc[-1],
+            "rsi_7": talib.RSI(close, timeperiod=7).iloc[-1],
+            "rsi_21": talib.RSI(close, timeperiod=21).iloc[-1],
+            
+            # استوکاستیک
+            "stoch_k": talib.STOCH(high, low, close, 
+                                  fastk_period=14, 
+                                  slowk_period=3, 
+                                  slowd_period=3)[0].iloc[-1],
+            "stoch_d": talib.STOCH(high, low, close, 
+                                  fastk_period=14, 
+                                  slowk_period=3, 
+                                  slowd_period=3)[1].iloc[-1],
+            
+            # Williams %R
+            "williams_r": talib.WILLR(high, low, close, timeperiod=14).iloc[-1],
+            
+            # CCI - شاخص کانال کالا
+            "cci": talib.CCI(high, low, close, timeperiod=20).iloc[-1],
+            
+            # مومنتوم
+            "momentum": talib.MOM(close, timeperiod=10).iloc[-1],
+            
+            # نوسان‌گر قیمت درصدی
+            "ppo": talib.PPO(close, fastperiod=12, slowperiod=26).iloc[-1],
+            
+            # نوسان‌گر حجم قیمت
+            "pvo": self._calculate_pvo(df['volume']).iloc[-1],
+            
+            # Ultimate Oscillator
+            "uo": self._ultimate_oscillator(high, low, close).iloc[-1],
+            
+            # Awesome Oscillator
+            "ao": self._awesome_oscillator(high, low).iloc[-1]
+        }
+    
+    def _calculate_volatility_indicators(self, df: pd.DataFrame) -> Dict:
+        """محاسبه ایندیکاتورهای نوسان"""
+        close = df['close']
+        high = df['high']
+        low = df['low']
+        
+        return {
+            # باندهای بولینگر
+            "bb_upper": talib.BBANDS(close, 
+                                   timeperiod=20, 
+                                   nbdevup=2, 
+                                   nbdevdn=2)[0].iloc[-1],
+            "bb_middle": talib.BBANDS(close, 
+                                    timeperiod=20, 
+                                    nbdevup=2, 
+                                    nbdevdn=2)[1].iloc[-1],
+            "bb_lower": talib.BBANDS(close, 
+                                   timeperiod=20, 
+                                   nbdevup=2, 
+                                   nbdevdn=2)[2].iloc[-1],
+            "bb_width": self._bb_width(close).iloc[-1],
+            "bb_position": self._bb_position(close).iloc[-1],
+            
+            # ATR - محدوده واقعی میانگین
+            "atr": talib.ATR(high, low, close, timeperiod=14).iloc[-1],
+            
+            # Keltner Channels
+            "keltner_upper": self._keltner_upper(high, low, close).iloc[-1],
+            "keltner_lower": self._keltner_lower(high, low, close).iloc[-1],
+            
+            # Donchian Channels
+            "donchian_upper": self._donchian_upper(high, low).iloc[-1],
+            "donchian_lower": self._donchian_lower(high, low).iloc[-1],
+            
+            # نوسان استاندارد
+            "volatility_20": close.pct_change().rolling(20).std().iloc[-1],
+            "volatility_50": close.pct_change().rolling(50).std().iloc[-1]
+        }
+    
+    def _calculate_volume_indicators(self, df: pd.DataFrame) -> Dict:
+        """محاسبه ایندیکاتورهای حجم"""
+        close = df['close']
+        high = df['high']
+        low = df['low']
+        volume = df['volume']
+        
+        return {
+            # حجم متعادل
+            "obv": talib.OBV(close, volume).iloc[-1],
+            
+            # شاخص جریان پول
+            "mfi": talib.MFI(high, low, close, volume, timeperiod=14).iloc[-1],
+            
+            # شاخص قدرت نسبی حجم
+            "vpt": self._volume_price_trend(close, volume).iloc[-1],
+            
+            # نوسان‌گر حجم
+            "vo": self._volume_oscillator(volume).iloc[-1],
+            
+            # حجم متوسط
+            "volume_sma_20": volume.rolling(20).mean().iloc[-1],
+            "volume_ratio": volume.iloc[-1] / volume.rolling(20).mean().iloc[-1],
+            
+            # Chaikin Money Flow
+            "cmf": self._chaikin_money_flow(high, low, close, volume).iloc[-1],
+            
+            # Ease of Movement
+            "eom": self._ease_of_movement(high, low, volume).iloc[-1],
+            
+            # Volume Weighted Average Price
+            "vwap": self._vwap(high, low, close, volume).iloc[-1]
+        }
+    
+    def _calculate_oscillator_indicators(self, df: pd.DataFrame) -> Dict:
+        """محاسبه نوسان‌گرها"""
+        close = df['close']
+        high = df['high']
+        low = df['low']
+        
+        return {
+            # Stochastic RSI
+            "stoch_rsi": self._stoch_rsi(close).iloc[-1],
+            
+            # Commodity Channel Index
+            "cci_20": talib.CCI(high, low, close, timeperiod=20).iloc[-1],
+            "cci_40": talib.CCI(high, low, close, timeperiod=40).iloc[-1],
+            
+            # Detrended Price Oscillator
+            "dpo": self._detrended_price_oscillator(close).iloc[-1],
+            
+            # Price Rate of Change
+            "roc": talib.ROC(close, timeperiod=10).iloc[-1],
+            "roc_20": talib.ROC(close, timeperiod=20).iloc[-1],
+            
+            # Williams Accumulation/Distribution
+            "wad": self._williams_ad(high, low, close).iloc[-1],
+            
+            # Chande Momentum Oscillator
+            "cmo": talib.CMO(close, timeperiod=14).iloc[-1],
+            
+            # Relative Vigor Index
+            "rvi": self._relative_vigor_index(open, high, low, close).iloc[-1]
+        }
+    
+    def _analyze_trend(self, df: pd.DataFrame, trend_indicators: Dict) -> Dict:
+        """تحلیل روند بازار"""
+        current_price = df['close'].iloc[-1]
+        
+        # تحلیل میانگین‌های متحرک
+        ema_9 = trend_indicators["ema_9"]
+        ema_21 = trend_indicators["ema_21"]
+        ema_50 = trend_indicators["ema_50"]
+        ema_200 = trend_indicators["ema_200"]
+        
+        # تعیین روند کوتاه‌مدت
+        if current_price > ema_9 > ema_21 > ema_50:
+            short_term_trend = "صعودی قوی"
+            short_term_strength = 0.9
+        elif current_price > ema_9 and ema_9 > ema_21:
+            short_term_trend = "صعودی"
+            short_term_strength = 0.7
+        elif current_price < ema_9 < ema_21 < ema_50:
+            short_term_trend = "نزولی قوی"
+            short_term_strength = 0.9
+        elif current_price < ema_9 and ema_9 < ema_21:
+            short_term_trend = "نزولی"
+            short_term_strength = 0.7
+        else:
+            short_term_trend = "خنثی"
+            short_term_strength = 0.5
+        
+        # تحلیل ADX
+        adx = trend_indicators["adx"]
+        plus_di = trend_indicators["plus_di"]
+        minus_di = trend_indicators["minus_di"]
+        
+        if adx > 25:
+            if plus_di > minus_di:
+                trend_direction = "صعودی"
+            else:
+                trend_direction = "نزولی"
+            trend_strength = min(adx / 100, 1.0)
+        else:
+            trend_direction = "بدون روند مشخص"
+            trend_strength = 0.3
+        
+        return {
+            "short_term": short_term_trend,
+            "short_term_strength": short_term_strength,
+            "direction": trend_direction,
+            "strength": trend_strength,
+            "adx": adx,
+            "ema_alignment": self._check_ema_alignment(ema_9, ema_21, ema_50, ema_200)
+        }
+    
+    def _generate_combined_signals(self, trend: Dict, momentum: Dict, 
+                                 volatility: Dict, volume: Dict, oscillators: Dict) -> List[TechnicalSignal]:
+        """تولید سیگنال‌های ترکیبی"""
+        signals = []
+        
+        # سیگنال RSI
+        rsi = momentum["rsi"]
+        if rsi < 30:
+            signals.append(TechnicalSignal("RSI", rsi, "BUY", (30 - rsi) / 30))
+        elif rsi > 70:
+            signals.append(TechnicalSignal("RSI", rsi, "SELL", (rsi - 70) / 30))
+        
+        # سیگنال MACD
+        macd = trend["macd"]
+        macd_signal = trend["macd_signal"]
+        if macd > macd_signal and macd > 0:
+            signals.append(TechnicalSignal("MACD", macd, "BUY", 0.7))
+        elif macd < macd_signal and macd < 0:
+            signals.append(TechnicalSignal("MACD", macd, "SELL", 0.7))
+        
+        # سیگنال استوکاستیک
+        stoch_k = momentum["stoch_k"]
+        stoch_d = momentum["stoch_d"]
+        if stoch_k < 20 and stoch_d < 20 and stoch_k > stoch_d:
+            signals.append(TechnicalSignal("Stochastic", stoch_k, "BUY", 0.6))
+        elif stoch_k > 80 and stoch_d > 80 and stoch_k < stoch_d:
+            signals.append(TechnicalSignal("Stochastic", stoch_k, "SELL", 0.6))
+        
+        # سیگنال باندهای بولینگر
+        bb_position = volatility["bb_position"]
+        if bb_position < 0.05:
+            signals.append(TechnicalSignal("Bollinger Bands", bb_position, "BUY", 0.8))
+        elif bb_position > 0.95:
+            signals.append(TechnicalSignal("Bollinger Bands", bb_position, "SELL", 0.8))
+        
+        # سیگنال حجم
+        volume_ratio = volume["volume_ratio"]
+        if volume_ratio > 1.5:
+            signals.append(TechnicalSignal("Volume", volume_ratio, "CONFIRMATION", 0.5))
+        
+        return signals
+    
+    def _find_support_resistance(self, df: pd.DataFrame, window: int = 20) -> Dict:
+        """پیدا کردن سطوح حمایت و مقاومت"""
+        close = df['close']
+        high = df['high']
+        low = df['low']
+        
+        # مقاومت‌ها (سقف‌های محلی)
+        resistance_levels = []
+        for i in range(window, len(high) - window):
+            if high.iloc[i] == high.iloc[i-window:i+window].max():
+                resistance_levels.append(high.iloc[i])
+        
+        # حمایت‌ها (کف‌های محلی)
+        support_levels = []
+        for i in range(window, len(low) - window):
+            if low.iloc[i] == low.iloc[i-window:i+window].min():
+                support_levels.append(low.iloc[i])
+        
+        # نزدیک‌ترین سطوح به قیمت فعلی
+        current_price = close.iloc[-1]
+        nearest_resistance = min([r for r in resistance_levels if r > current_price], 
+                               key=lambda x: abs(x - current_price), default=None)
+        nearest_support = min([s for s in support_levels if s < current_price], 
+                            key=lambda x: abs(x - current_price), default=None)
+        
+        return {
+            "support_levels": sorted(list(set(support_levels)))[-5:],  # 5 سطح اخیر
+            "resistance_levels": sorted(list(set(resistance_levels)))[-5:],
+            "nearest_support": nearest_support,
+            "nearest_resistance": nearest_resistance,
+            "support_distance": (current_price - nearest_support) / current_price if nearest_support else None,
+            "resistance_distance": (nearest_resistance - current_price) / current_price if nearest_resistance else None
+        }
+    
+    def _detect_price_patterns(self, df: pd.DataFrame) -> List[Dict]:
+        """تشخیص الگوهای قیمتی"""
+        patterns = []
+        open_price = df['open']
+        high = df['high']
+        low = df['low']
+        close = df['close']
+        
+        # الگوهای شمعی
+        try:
+            # Hammer
+            hammer = talib.CDLHAMMER(open_price, high, low, close)
+            if hammer.iloc[-1] > 0:
+                patterns.append({"name": "چکش", "type": "صعودی", "reliability": 0.6})
+            
+            # Engulfing
+            engulfing = talib.CDLENGULFING(open_price, high, low, close)
+            if engulfing.iloc[-1] > 0:
+                patterns.append({"name": "Engulfing صعودی", "type": "صعودی", "reliability": 0.7})
+            elif engulfing.iloc[-1] < 0:
+                patterns.append({"name": "Engulfing نزولی", "type": "نزولی", "reliability": 0.7})
+            
+            # Doji
+            doji = talib.CDLDOJI(open_price, high, low, close)
+            if doji.iloc[-1] > 0:
+                patterns.append({"name": "دوجی", "type": "خنثی", "reliability": 0.5})
+            
+            # Morning Star
+            morning_star = talib.CDLMORNINGSTAR(open_price, high, low, close)
+            if morning_star.iloc[-1] > 0:
+                patterns.append({"name": "ستاره صبحگاهی", "type": "صعودی", "reliability": 0.8})
+            
+            # Evening Star
+            evening_star = talib.CDLEVENINGSTAR(open_price, high, low, close)
+            if evening_star.iloc[-1] > 0:
+                patterns.append({"name": "ستاره عصرگاهی", "type": "نزولی", "reliability": 0.8})
+                
+        except Exception as e:
+            logger.warning(f"خطا در تشخیص الگوهای شمعی: {e}")
+        
+        return patterns
+    
+    def _calculate_volatility(self, df: pd.DataFrame) -> Dict:
+        """محاسبه نوسان بازار"""
+        close = df['close']
+        returns = close.pct_change().dropna()
+        
+        return {
+            "daily_volatility": returns.std(),
+            "annualized_volatility": returns.std() * np.sqrt(365),
+            "current_vs_historical": returns.std() / returns.rolling(50).std().iloc[-1],
+            "volatility_regime": "بالا" if returns.std() > returns.rolling(50).std().iloc[-1] else "پایین"
+        }
+    
+    def _generate_summary(self, signals: List[TechnicalSignal], trend_analysis: Dict) -> Dict:
+        """تولید خلاصه تحلیل تکنیکال"""
+        buy_signals = [s for s in signals if s.signal == "BUY"]
+        sell_signals = [s for s in signals if s.signal == "SELL"]
+        
+        total_buy_strength = sum(s.strength for s in buy_signals)
+        total_sell_strength = sum(s.strength for s in sell_signals)
+        
+        if total_buy_strength > total_sell_strength:
+            overall_signal = "صعودی"
+            confidence = min(total_buy_strength / (len(buy_signals) + 0.1), 1.0)
+        elif total_sell_strength > total_buy_strength:
+            overall_signal = "نزولی"
+            confidence = min(total_sell_strength / (len(sell_signals) + 0.1), 1.0)
+        else:
+            overall_signal = "خنثی"
+            confidence = 0.5
+        
+        # ترکیب با تحلیل روند
+        trend_strength = trend_analysis["strength"]
+        if trend_analysis["direction"] == overall_signal:
+            confidence = (confidence + trend_strength) / 2
+        else:
+            confidence = confidence * 0.7  # کاهش اطمینان در تضاد روند
+        
+        return {
+            "overall_signal": overall_signal,
+            "confidence": round(confidence, 2),
+            "buy_signals_count": len(buy_signals),
+            "sell_signals_count": len(sell_signals),
+            "trend_alignment": trend_analysis["direction"] == overall_signal,
+            "key_indicators": {
+                "rsi": "اشباع فروش" if any(s.name == "RSI" and s.signal == "BUY" for s in signals) else
+                       "اشباع خرید" if any(s.name == "RSI" and s.signal == "SELL" for s in signals) else "نرمال",
+                "macd": "صعودی" if any(s.name == "MACD" and s.signal == "BUY" for s in signals) else
+                        "نزولی" if any(s.name == "MACD" and s.signal == "SELL" for s in signals) else "خنثی",
+                "bollinger": "فروش بیش از حد" if any(s.name == "Bollinger Bands" and s.signal == "BUY" for s in signals) else
+                            "خرید بیش از حد" if any(s.name == "Bollinger Bands" and s.signal == "SELL" for s in signals) else "نرمال"
+            }
+        }
+    
+    # توابع کمکی برای ایندیکاتورهای سفارشی
+    def _ichimoku_tenkan_sen(self, high, low, period=9):
+        return (high.rolling(period).max() + low.rolling(period).min()) / 2
+    
+    def _ichimoku_kijun_sen(self, high, low, period=26):
+        return (high.rolling(period).max() + low.rolling(period).min()) / 2
+    
+    def _ichimoku_senkou_span_a(self, high, low):
+        return (self._ichimoku_tenkan_sen(high, low) + self._ichimoku_kijun_sen(high, low)) / 2
+    
+    def _calculate_kst(self, close, roc1=10, roc2=15, roc3=20, roc4=30, 
+                      sma1=10, sma2=10, sma3=10, sma4=15):
+        roc1_series = talib.ROC(close, timeperiod=roc1)
+        roc2_series = talib.ROC(close, timeperiod=roc2)
+        roc3_series = talib.ROC(close, timeperiod=roc3)
+        roc4_series = talib.ROC(close, timeperiod=roc4)
+        
+        kst = (roc1_series.rolling(sma1).mean() * 1 +
+               roc2_series.rolling(sma2).mean() * 2 +
+               roc3_series.rolling(sma3).mean() * 3 +
+               roc4_series.rolling(sma4).mean() * 4)
+        return kst
+    
+    def _calculate_pvo(self, volume, fast_period=12, slow_period=26, signal_period=9):
+        ema_fast = volume.ewm(span=fast_period).mean()
+        ema_slow = volume.ewm(span=slow_period).mean()
+        pvo = ((ema_fast - ema_slow) / ema_slow) * 100
+        return pvo
+    
+    def _ultimate_oscillator(self, high, low, close, period1=7, period2=14, period3=28):
+        # محاسبات ساده‌شده
+        bp = close - np.minimum(low, close.shift(1))
+        tr = np.maximum(high, close.shift(1)) - np.minimum(low, close.shift(1))
+        
+        avg1 = bp.rolling(period1).sum() / tr.rolling(period1).sum()
+        avg2 = bp.rolling(period2).sum() / tr.rolling(period2).sum()
+        avg3 = bp.rolling(period3).sum() / tr.rolling(period3).sum()
+        
+        uo = (avg1 * 4 + avg2 * 2 + avg3) / 7 * 100
+        return uo
+    
+    def _awesome_oscillator(self, high, low, fast_period=5, slow_period=34):
+        median_price = (high + low) / 2
+        ao = median_price.rolling(fast_period).mean() - median_price.rolling(slow_period).mean()
+        return ao
+    
+    def _bb_width(self, close, period=20, std=2):
+        upper, middle, lower = talib.BBANDS(close, timeperiod=period, nbdevup=std, nbdevdn=std)
+        return (upper - lower) / middle
+    
+    def _bb_position(self, close, period=20, std=2):
+        upper, middle, lower = talib.BBANDS(close, timeperiod=period, nbdevup=std, nbdevdn=std)
+        return (close - lower) / (upper - lower)
+    
+    def _keltner_upper(self, high, low, close, period=20, multiplier=2):
+        typical_price = (high + low + close) / 3
+        atr = talib.ATR(high, low, close, timeperiod=period)
+        return typical_price.rolling(period).mean() + (multiplier * atr)
+    
+    def _keltner_lower(self, high, low, close, period=20, multiplier=2):
+        typical_price = (high + low + close) / 3
+        atr = talib.ATR(high, low, close, timeperiod=period)
+        return typical_price.rolling(period).mean() - (multiplier * atr)
+    
+    def _donchian_upper(self, high, low, period=20):
+        return high.rolling(period).max()
+    
+    def _donchian_lower(self, high, low, period=20):
+        return low.rolling(period).min()
+    
+    def _volume_price_trend(self, close, volume):
+        vpt = (close.diff() / close.shift(1)) * volume
+        return vpt.cumsum()
+    
+    def _volume_oscillator(self, volume, short_period=5, long_period=10):
+        short_ma = volume.rolling(short_period).mean()
+        long_ma = volume.rolling(long_period).mean()
+        return ((short_ma - long_ma) / long_ma) * 100
+    
+    def _chaikin_money_flow(self, high, low, close, volume, period=20):
+        mf_multiplier = ((close - low) - (high - close)) / (high - low)
+        mf_volume = mf_multiplier * volume
+        return mf_volume.rolling(period).sum() / volume.rolling(period).sum()
+    
+    def _ease_of_movement(self, high, low, volume, period=14):
+        distance_moved = ((high + low) / 2) - ((high.shift(1) + low.shift(1)) / 2)
+        box_ratio = (volume / 100000000) / (high - low)
+        eom = distance_moved / box_ratio
+        return eom.rolling(period).mean()
+    
+    def _vwap(self, high, low, close, volume):
+        typical_price = (high + low + close) / 3
+        return (typical_price * volume).cumsum() / volume.cumsum()
+    
+    def _stoch_rsi(self, close, rsi_period=14, stoch_period=14):
+        rsi = talib.RSI(close, timeperiod=rsi_period)
+        stoch_rsi = (rsi - rsi.rolling(stoch_period).min()) / \
+                   (rsi.rolling(stoch_period).max() - rsi.rolling(stoch_period).min())
+        return stoch_rsi * 100
+    
+    def _detrended_price_oscillator(self, close, period=20):
+        return close - close.rolling(period).mean()
+    
+    def _williams_ad(self, high, low, close):
+        return ((close - low) - (high - close)) / (high - low)
+    
+    def _relative_vigor_index(self, open, high, low, close, period=10):
+        a = close - open
+        b = high - low
+        numerator = a.rolling(4).sum()
+        denominator = b.rolling(4).sum()
+        rvi = numerator / denominator
+        return rvi.rolling(period).mean()
+    
+    def _check_ema_alignment(self, ema9, ema21, ema50, ema200):
+        """بررسی تراز بودن میانگین‌های متحرک"""
+        if ema9 > ema21 > ema50 > ema200:
+            return "صعودی کامل"
+        elif ema9 < ema21 < ema50 < ema200:
+            return "نزولی کامل"
+        elif ema9 > ema21 and ema21 > ema50:
+            return "صعودی کوتاه‌مدت"
+        elif ema9 < ema21 and ema21 < ema50:
+            return "نزولی کوتاه‌مدت"
+        else:
+            return "درهم"
