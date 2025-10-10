@@ -1,0 +1,305 @@
+"""
+ابزارهای کار با داده
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+import logging
+import requests
+import json
+
+logger = logging.getLogger(__name__)
+
+class DataTools:
+    """ابزارهای کمکی برای کار با داده"""
+    
+    def __init__(self):
+        self.cache = {}
+        self.cache_timeout = 300  # 5 دقیقه
+    
+    def generate_sample_data(self, symbol: str, 
+                           days: int = 30, 
+                           timeframe: str = "1h") -> pd.DataFrame:
+        """تولید داده‌های نمونه"""
+        try:
+            # تولید تاریخ‌ها
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            
+            # تعیین فرکانس بر اساس timeframe
+            freq = self._get_frequency(timeframe)
+            dates = pd.date_range(start=start_date, end=end_date, freq=freq)
+            
+            # تولید قیمت‌های واقعی‌تر
+            np.random.seed(hash(symbol) % 10000)
+            
+            # قیمت پایه بر اساس سیمبل
+            base_price = self._get_base_price(symbol)
+            volatility = 0.02  # نوسان 2%
+            
+            # تولید قیمت‌ها با روند تصادفی
+            prices = [base_price]
+            for i in range(1, len(dates)):
+                # تغییر قیمت با درنظرگیری mean reversion
+                change = np.random.normal(0, volatility)
+                if abs(prices[-1] - base_price) / base_price > 0.1:
+                    # بازگشت به میانگین اگر فاصله زیاد شود
+                    change = -0.01 if prices[-1] > base_price else 0.01
+                
+                new_price = prices[-1] * (1 + change)
+                prices.append(new_price)
+            
+            prices = np.array(prices)
+            
+            # تولید OHLCV واقعی‌تر
+            df = pd.DataFrame({
+                'open': prices * (1 + np.random.normal(0, 0.001, len(prices))),
+                'high': prices * (1 + np.abs(np.random.normal(0, 0.005, len(prices)))),
+                'low': prices * (1 - np.abs(np.random.normal(0, 0.005, len(prices)))),
+                'close': prices,
+                'volume': np.random.lognormal(10, 1, len(prices))
+            }, index=dates)
+            
+            logger.info(f"تولید {len(df)} کندل نمونه برای {symbol}")
+            return df
+            
+        except Exception as e:
+            logger.error(f"خطا در تولید داده نمونه: {e}")
+            return pd.DataFrame()
+    
+    def validate_data_quality(self, data: pd.DataFrame) -> Dict:
+        """اعتبارسنجی کیفیت داده"""
+        try:
+            checks = {}
+            
+            # بررسی missing values
+            checks['missing_values'] = data.isnull().sum().to_dict()
+            checks['missing_percentage'] = (data.isnull().sum() / len(data) * 100).to_dict()
+            
+            # بررسی duplicateها
+            checks['duplicate_count'] = data.duplicated().sum()
+            
+            # بررسی مقادیر غیرعادی
+            checks['zero_volume'] = (data['volume'] == 0).sum()
+            checks['negative_prices'] = (
+                (data['open'] <= 0) | 
+                (data['high'] <= 0) | 
+                (data['low'] <= 0) | 
+                (data['close'] <= 0)
+            ).sum()
+            
+            # بررسی consistency قیمت‌ها
+            checks['high_low_inconsistent'] = (
+                data['high'] < data['low']
+            ).sum()
+            
+            checks['open_close_inconsistent'] = (
+                (data['open'] > data['high']) | 
+                (data['open'] < data['low']) |
+                (data['close'] > data['high']) | 
+                (data['close'] < data['low'])
+            ).sum()
+            
+            # محاسبه امتیاز کیفیت
+            quality_score = self._calculate_quality_score(checks, len(data))
+            checks['quality_score'] = quality_score
+            checks['quality_grade'] = self._get_quality_grade(quality_score)
+            
+            return checks
+            
+        except Exception as e:
+            logger.error(f"خطا در اعتبارسنجی کیفیت داده: {e}")
+            return {}
+    
+    def split_train_test(self, data: pd.DataFrame, 
+                        test_size: float = 0.2,
+                        method: str = "sequential") -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """تقسیم داده به train و test"""
+        try:
+            if method == "sequential":
+                # تقسیم sequential (برای سری‌های زمانی)
+                split_index = int(len(data) * (1 - test_size))
+                train_data = data.iloc[:split_index]
+                test_data = data.iloc[split_index:]
+                
+            elif method == "random":
+                # تقسیم random (برای غیر سری‌های زمانی)
+                indices = np.random.permutation(len(data))
+                split_index = int(len(data) * (1 - test_size))
+                train_idx, test_idx = indices[:split_index], indices[split_index:]
+                train_data = data.iloc[train_idx]
+                test_data = data.iloc[test_idx]
+            
+            else:
+                raise ValueError(f"روش {method} پشتیبانی نمی‌شود")
+            
+            logger.info(f"تقسیم داده: {len(train_data)} train, {len(test_data)} test")
+            return train_data, test_data
+            
+        except Exception as e:
+            logger.error(f"خطا در تقسیم داده: {e}")
+            return data.copy(), pd.DataFrame()
+    
+    def calculate_technical_metrics(self, data: pd.DataFrame) -> Dict:
+        """محاسبه معیارهای تکنیکال از داده"""
+        try:
+            metrics = {}
+            
+            # بازدهی
+            returns = data['close'].pct_change().dropna()
+            metrics['total_return'] = (data['close'].iloc[-1] / data['close'].iloc[0] - 1) * 100
+            metrics['avg_daily_return'] = returns.mean() * 100
+            metrics['volatility'] = returns.std() * 100
+            
+            # نوسان
+            metrics['price_range'] = (data['high'].max() - data['low'].min()) / data['close'].mean() * 100
+            metrics['avg_true_range'] = self._calculate_atr(data)
+            
+            # حجم
+            metrics['avg_volume'] = data['volume'].mean()
+            metrics['volume_volatility'] = data['volume'].std() / data['volume'].mean() * 100
+            
+            # الگوهای قیمتی
+            metrics['up_days'] = (data['close'] > data['open']).sum()
+            metrics['down_days'] = (data['close'] < data['open']).sum()
+            metrics['avg_candle_body'] = (abs(data['close'] - data['open']) / data['open'] * 100).mean()
+            
+            # همبستگی‌ها
+            if len(data) > 10:
+                metrics['autocorrelation'] = data['close'].autocorr()
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه معیارهای تکنیکال: {e}")
+            return {}
+    
+    def export_analysis_report(self, data: pd.DataFrame, 
+                             symbol: str,
+                             file_path: str) -> bool:
+        """خروجی گرفتن گزارش تحلیل داده"""
+        try:
+            report = {
+                "symbol": symbol,
+                "period": {
+                    "start": data.index[0].isoformat(),
+                    "end": data.index[-1].isoformat(),
+                    "total_candles": len(data)
+                },
+                "quality_metrics": self.validate_data_quality(data),
+                "technical_metrics": self.calculate_technical_metrics(data),
+                "summary_statistics": {
+                    "price": {
+                        "min": data['low'].min(),
+                        "max": data['high'].max(),
+                        "mean": data[['open', 'high', 'low', 'close']].mean().to_dict(),
+                        "std": data[['open', 'high', 'low', 'close']].std().to_dict()
+                    },
+                    "volume": {
+                        "min": data['volume'].min(),
+                        "max": data['volume'].max(),
+                        "mean": data['volume'].mean(),
+                        "std": data['volume'].std()
+                    }
+                }
+            }
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(report, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"گزارش تحلیل برای {symbol} به {file_path} ذخیره شد")
+            return True
+            
+        except Exception as e:
+            logger.error(f"خطا در ایجاد گزارش تحلیل: {e}")
+            return False
+    
+    def _get_frequency(self, timeframe: str) -> str:
+        """دریافت فرکانس بر اساس timeframe"""
+        frequencies = {
+            '1m': '1T',
+            '5m': '5T',
+            '15m': '15T', 
+            '1h': '1H',
+            '4h': '4H',
+            '1d': '1D',
+            '1w': '1W'
+        }
+        
+        return frequencies.get(timeframe, '1H')
+    
+    def _get_base_price(self, symbol: str) -> float:
+        """دریافت قیمت پایه بر اساس سیمبل"""
+        price_map = {
+            'BTC/USDT': 50000,
+            'ETH/USDT': 3000,
+            'ADA/USDT': 0.5,
+            'DOT/USDT': 7,
+            'LINK/USDT': 15,
+            'LTC/USDT': 70,
+            'BCH/USDT': 300,
+            'XLM/USDT': 0.12
+        }
+        
+        return price_map.get(symbol, 100)
+    
+    def _calculate_quality_score(self, checks: Dict, total_rows: int) -> float:
+        """محاسبه امتیاز کیفیت"""
+        if total_rows == 0:
+            return 0.0
+        
+        score = 100.0
+        
+        # جریمه برای missing values
+        missing_penalty = sum(checks['missing_percentage'].values()) * 2
+        score -= missing_penalty
+        
+        # جریمه برای duplicateها
+        duplicate_penalty = (checks['duplicate_count'] / total_rows) * 100
+        score -= duplicate_penalty
+        
+        # جریمه برای داده‌های غیرعادی
+        abnormal_penalty = (
+            checks['zero_volume'] + 
+            checks['negative_prices'] + 
+            checks['high_low_inconsistent'] + 
+            checks['open_close_inconsistent']
+        ) / total_rows * 100
+        
+        score -= abnormal_penalty
+        
+        return max(score, 0.0)
+    
+    def _get_quality_grade(self, score: float) -> str:
+        """دریافت درجه کیفیت"""
+        if score >= 90:
+            return "عالی"
+        elif score >= 80:
+            return "خوب"
+        elif score >= 70:
+            return "متوسط"
+        elif score >= 60:
+            return "ضعیف"
+        else:
+            return "بسیار ضعیف"
+    
+    def _calculate_atr(self, data: pd.DataFrame, period: int = 14) -> float:
+        """محاسبه ATR"""
+        try:
+            high = data['high']
+            low = data['low']
+            close = data['close']
+            
+            tr1 = high - low
+            tr2 = abs(high - close.shift())
+            tr3 = abs(low - close.shift())
+            
+            tr = np.maximum(np.maximum(tr1, tr2), tr3)
+            atr = tr.rolling(period).mean().iloc[-1]
+            
+            return atr
+            
+        except:
+            return 0.0
