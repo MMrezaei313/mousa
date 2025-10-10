@@ -1,0 +1,486 @@
+"""
+موتور بکتستینگ MousaTrade
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+from dataclasses import dataclass
+import logging
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class TradeAction(Enum):
+    ENTER_LONG = "ENTER_LONG"
+    ENTER_SHORT = "ENTER_SHORT" 
+    EXIT_LONG = "EXIT_LONG"
+    EXIT_SHORT = "EXIT_SHORT"
+    HOLD = "HOLD"
+
+@dataclass
+class BacktestTrade:
+    """معامله در بکتست"""
+    entry_time: datetime
+    exit_time: Optional[datetime]
+    entry_price: float
+    exit_price: Optional[float]
+    position_type: str  # LONG, SHORT
+    position_size: float
+    pnl: Optional[float]
+    pnl_percentage: Optional[float]
+    stop_loss: float
+    take_profit: List[float]
+    confidence: float
+    reasoning: Dict
+
+@dataclass
+class BacktestResult:
+    """نتیجه بکتست"""
+    symbol: str
+    timeframe: str
+    start_date: datetime
+    end_date: datetime
+    initial_balance: float
+    final_balance: float
+    total_return: float
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    win_rate: float
+    avg_profit: float
+    avg_loss: float
+    profit_factor: float
+    max_drawdown: float
+    sharpe_ratio: float
+    calmar_ratio: float
+    trades: List[BacktestTrade]
+    equity_curve: pd.Series
+    daily_returns: pd.Series
+
+class BacktestingEngine:
+    """موتور بکتستینگ"""
+    
+    def __init__(self, initial_balance: float = 10000):
+        self.initial_balance = initial_balance
+        self.commission = 0.001  # 0.1% کارمزد
+        self.slippage = 0.0005   # 0.05% اسلیپیج
+    
+    def run_backtest(self, strategy_name: str, 
+                    historical_data: pd.DataFrame,
+                    symbol: str,
+                    timeframe: str = "1h") -> BacktestResult:
+        """اجرای بکتست"""
+        try:
+            logger.info(f"شروع بکتست برای {symbol} با استراتژی {strategy_name}")
+            
+            # کپی داده‌ها برای جلوگیری از تغییر داده اصلی
+            data = historical_data.copy()
+            
+            # شبیه‌سازی اجرای استراتژی
+            trades = self._simulate_strategy_execution(data, strategy_name, symbol)
+            
+            # محاسبه معیارهای عملکرد
+            result = self._calculate_performance_metrics(
+                trades, data, symbol, timeframe
+            )
+            
+            logger.info(f"بکتست کامل شد: {result.total_trades} معامله, بازدهی: {result.total_return:.2f}%")
+            return result
+            
+        except Exception as e:
+            logger.error(f"خطا در اجرای بکتست: {e}")
+            return self._get_empty_result(symbol, timeframe)
+    
+    def _simulate_strategy_execution(self, data: pd.DataFrame,
+                                   strategy_name: str,
+                                   symbol: str) -> List[BacktestTrade]:
+        """شبیه‌سازی اجرای استراتژی"""
+        trades = []
+        current_position = None
+        balance = self.initial_balance
+        
+        for i in range(1, len(data)):
+            current_candle = data.iloc[i]
+            prev_candle = data.iloc[i-1]
+            
+            # تصمیم‌گیری استراتژی
+            action, confidence, reasoning = self._get_strategy_decision(
+                strategy_name, data[:i+1], current_position
+            )
+            
+            if action == TradeAction.ENTER_LONG and current_position is None:
+                # ورود به پوزیشن لانگ
+                entry_price = current_candle['close'] * (1 + self.slippage)
+                position_size = balance * 0.1  # 10% سرمایه
+                stop_loss = entry_price * 0.97  # 3% حد ضرر
+                take_profit = [
+                    entry_price * 1.03,  # 3% سود
+                    entry_price * 1.06   # 6% سود
+                ]
+                
+                trade = BacktestTrade(
+                    entry_time=current_candle.name,
+                    exit_time=None,
+                    entry_price=entry_price,
+                    exit_price=None,
+                    position_type="LONG",
+                    position_size=position_size,
+                    pnl=None,
+                    pnl_percentage=None,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    confidence=confidence,
+                    reasoning=reasoning
+                )
+                
+                trades.append(trade)
+                current_position = trade
+                balance -= position_size
+                
+            elif action == TradeAction.ENTER_SHORT and current_position is None:
+                # ورود به پوزیشن شورت
+                entry_price = current_candle['close'] * (1 - self.slippage)
+                position_size = balance * 0.1  # 10% سرمایه
+                stop_loss = entry_price * 1.03  # 3% حد ضرر
+                take_profit = [
+                    entry_price * 0.97,  # 3% سود
+                    entry_price * 0.94   # 6% سود
+                ]
+                
+                trade = BacktestTrade(
+                    entry_time=current_candle.name,
+                    exit_time=None,
+                    entry_price=entry_price,
+                    exit_price=None,
+                    position_type="SHORT",
+                    position_size=position_size,
+                    pnl=None,
+                    pnl_percentage=None,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    confidence=confidence,
+                    reasoning=reasoning
+                )
+                
+                trades.append(trade)
+                current_position = trade
+                balance -= position_size
+                
+            elif current_position is not None:
+                # بررسی خروج از پوزیشن
+                should_exit = self._check_exit_conditions(
+                    current_position, current_candle, data[:i+1]
+                )
+                
+                if should_exit:
+                    exit_price = current_candle['close']
+                    if current_position.position_type == "LONG":
+                        exit_price *= (1 - self.slippage)
+                    else:
+                        exit_price *= (1 + self.slippage)
+                    
+                    # محاسبه سود/ضرر
+                    if current_position.position_type == "LONG":
+                        pnl = (exit_price - current_position.entry_price) * current_position.position_size
+                        pnl_percentage = (exit_price - current_position.entry_price) / current_position.entry_price
+                    else:
+                        pnl = (current_position.entry_price - exit_price) * current_position.position_size
+                        pnl_percentage = (current_position.entry_price - exit_price) / current_position.entry_price
+                    
+                    # کسر کارمزد
+                    pnl -= current_position.position_size * self.commission
+                    pnl_percentage -= self.commission
+                    
+                    # بروزرسانی معامله
+                    current_position.exit_time = current_candle.name
+                    current_position.exit_price = exit_price
+                    current_position.pnl = pnl
+                    current_position.pnl_percentage = pnl_percentage
+                    
+                    balance += current_position.position_size + pnl
+                    current_position = None
+        
+        return trades
+    
+    def _get_strategy_decision(self, strategy_name: str,
+                             data: pd.DataFrame,
+                             current_position: Optional[BacktestTrade]) -> Tuple[TradeAction, float, Dict]:
+        """دریافت تصمیم استراتژی"""
+        
+        if strategy_name == "trend_following":
+            return self._trend_following_strategy(data, current_position)
+        elif strategy_name == "mean_reversion":
+            return self._mean_reversion_strategy(data, current_position)
+        elif strategy_name == "breakout":
+            return self._breakout_strategy(data, current_position)
+        else:
+            return self._default_strategy(data, current_position)
+    
+    def _trend_following_strategy(self, data: pd.DataFrame,
+                                current_position: Optional[BacktestTrade]) -> Tuple[TradeAction, float, Dict]:
+        """استراتژی پیروی از روند"""
+        if len(data) < 20:
+            return TradeAction.HOLD, 0.5, {"reason": "داده ناکافی"}
+        
+        # محاسبه میانگین متحرک
+        sma_20 = data['close'].rolling(20).mean().iloc[-1]
+        sma_50 = data['close'].rolling(50).mean().iloc[-1]
+        current_price = data['close'].iloc[-1]
+        
+        reasoning = {
+            "sma_20": sma_20,
+            "sma_50": sma_50,
+            "current_price": current_price
+        }
+        
+        if current_position is None:
+            if current_price > sma_20 > sma_50:
+                return TradeAction.ENTER_LONG, 0.7, {**reasoning, "signal": "روند صعودی"}
+            elif current_price < sma_20 < sma_50:
+                return TradeAction.ENTER_SHORT, 0.7, {**reasoning, "signal": "روند نزولی"}
+        else:
+            if current_position.position_type == "LONG" and current_price < sma_20:
+                return TradeAction.EXIT_LONG, 0.6, {**reasoning, "signal": "شکست حمایت"}
+            elif current_position.position_type == "SHORT" and current_price > sma_20:
+                return TradeAction.EXIT_SHORT, 0.6, {**reasoning, "signal": "شکست مقاومت"}
+        
+        return TradeAction.HOLD, 0.5, {**reasoning, "signal": "انتظار"}
+    
+    def _mean_reversion_strategy(self, data: pd.DataFrame,
+                               current_position: Optional[BacktestTrade]) -> Tuple[TradeAction, float, Dict]:
+        """استراتژی بازگشت به میانگین"""
+        if len(data) < 14:
+            return TradeAction.HOLD, 0.5, {"reason": "داده ناکافی"}
+        
+        # محاسبه RSI
+        delta = data['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs)).iloc[-1]
+        
+        current_price = data['close'].iloc[-1]
+        sma_20 = data['close'].rolling(20).mean().iloc[-1]
+        
+        reasoning = {
+            "rsi": rsi,
+            "current_price": current_price,
+            "sma_20": sma_20
+        }
+        
+        if current_position is None:
+            if rsi < 30 and current_price < sma_20:
+                return TradeAction.ENTER_LONG, 0.65, {**reasoning, "signal": "اشباع فروش"}
+            elif rsi > 70 and current_price > sma_20:
+                return TradeAction.ENTER_SHORT, 0.65, {**reasoning, "signal": "اشباع خرید"}
+        else:
+            if current_position.position_type == "LONG" and rsi > 50:
+                return TradeAction.EXIT_LONG, 0.6, {**reasoning, "signal": "بازگشت به میانگین"}
+            elif current_position.position_type == "SHORT" and rsi < 50:
+                return TradeAction.EXIT_SHORT, 0.6, {**reasoning, "signal": "بازگشت به میانگین"}
+        
+        return TradeAction.HOLD, 0.5, {**reasoning, "signal": "انتظار"}
+    
+    def _breakout_strategy(self, data: pd.DataFrame,
+                         current_position: Optional[BacktestTrade]) -> Tuple[TradeAction, float, Dict]:
+        """استراتژی شکست"""
+        if len(data) < 20:
+            return TradeAction.HOLD, 0.5, {"reason": "داده ناکافی"}
+        
+        # محاسبه مقاومت و حمایت
+        resistance = data['high'].rolling(20).max().iloc[-1]
+        support = data['low'].rolling(20).min().iloc[-1]
+        current_price = data['close'].iloc[-1]
+        current_volume = data['volume'].iloc[-1]
+        avg_volume = data['volume'].rolling(20).mean().iloc[-1]
+        
+        reasoning = {
+            "resistance": resistance,
+            "support": support,
+            "current_price": current_price,
+            "volume_ratio": current_volume / avg_volume if avg_volume > 0 else 1
+        }
+        
+        if current_position is None:
+            if current_price > resistance and current_volume > avg_volume * 1.2:
+                return TradeAction.ENTER_LONG, 0.75, {**reasoning, "signal": "شکست مقاومت"}
+            elif current_price < support and current_volume > avg_volume * 1.2:
+                return TradeAction.ENTER_SHORT, 0.75, {**reasoning, "signal": "شکست حمایت"}
+        else:
+            # خروج بر اساس هدف یا حد ضرر
+            return TradeAction.HOLD, 0.5, {**reasoning, "signal": "در پوزیشن"}
+        
+        return TradeAction.HOLD, 0.5, {**reasoning, "signal": "انتظار"}
+    
+    def _default_strategy(self, data: pd.DataFrame,
+                        current_position: Optional[BacktestTrade]) -> Tuple[TradeAction, float, Dict]:
+        """استراتژی پیش‌فرض"""
+        return TradeAction.HOLD, 0.5, {"reason": "استراتژی پیش‌فرض"}
+    
+    def _check_exit_conditions(self, position: BacktestTrade,
+                             current_candle: pd.Series,
+                             data: pd.DataFrame) -> bool:
+        """بررسی شرایط خروج"""
+        current_price = current_candle['close']
+        
+        # بررسی حد ضرر
+        if position.position_type == "LONG" and current_price <= position.stop_loss:
+            return True
+        elif position.position_type == "SHORT" and current_price >= position.stop_loss:
+            return True
+        
+        # بررسی اهداف سود
+        for target in position.take_profit:
+            if position.position_type == "LONG" and current_price >= target:
+                return True
+            elif position.position_type == "SHORT" and current_price <= target:
+                return True
+        
+        # خروج بر اساس زمان (حداکثر 7 روز)
+        hold_time = (current_candle.name - position.entry_time).days
+        if hold_time >= 7:
+            return True
+        
+        return False
+    
+    def _calculate_performance_metrics(self, trades: List[BacktestTrade],
+                                     data: pd.DataFrame,
+                                     symbol: str,
+                                     timeframe: str) -> BacktestResult:
+        """محاسبه معیارهای عملکرد"""
+        if not trades:
+            return self._get_empty_result(symbol, timeframe)
+        
+        # فیلتر معاملات کامل شده
+        completed_trades = [t for t in trades if t.exit_time is not None]
+        
+        if not completed_trades:
+            return self._get_empty_result(symbol, timeframe)
+        
+        # محاسبه سود/ضرر
+        pnls = [t.pnl for t in completed_trades if t.pnl is not None]
+        pnl_percentages = [t.pnl_percentage for t in completed_trades if t.pnl_percentage is not None]
+        
+        winning_trades = [p for p in pnls if p > 0]
+        losing_trades = [p for p in pnls if p <= 0]
+        
+        total_trades = len(completed_trades)
+        winning_count = len(winning_trades)
+        losing_count = len(losing_trades)
+        
+        win_rate = winning_count / total_trades if total_trades > 0 else 0
+        avg_profit = np.mean(winning_trades) if winning_trades else 0
+        avg_loss = np.mean(losing_trades) if losing_trades else 0
+        
+        total_profit = sum(winning_trades)
+        total_loss = abs(sum(losing_trades))
+        profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
+        
+        # محاسبه drawdown
+        equity_curve = self._calculate_equity_curve(completed_trades, self.initial_balance)
+        max_drawdown = self._calculate_max_drawdown(equity_curve)
+        
+        # محاسبه Sharpe Ratio (ساده‌شده)
+        daily_returns = equity_curve.pct_change().dropna()
+        sharpe_ratio = self._calculate_sharpe_ratio(daily_returns)
+        calmar_ratio = self._calculate_calmar_ratio(total_profit - total_loss, max_drawdown)
+        
+        total_return = (equity_curve.iloc[-1] - self.initial_balance) / self.initial_balance * 100
+        
+        return BacktestResult(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=data.index[0],
+            end_date=data.index[-1],
+            initial_balance=self.initial_balance,
+            final_balance=equity_curve.iloc[-1],
+            total_return=total_return,
+            total_trades=total_trades,
+            winning_trades=winning_count,
+            losing_trades=losing_count,
+            win_rate=win_rate,
+            avg_profit=avg_profit,
+            avg_loss=avg_loss,
+            profit_factor=profit_factor,
+            max_drawdown=max_drawdown,
+            sharpe_ratio=sharpe_ratio,
+            calmar_ratio=calmar_ratio,
+            trades=completed_trades,
+            equity_curve=equity_curve,
+            daily_returns=daily_returns
+        )
+    
+    def _calculate_equity_curve(self, trades: List[BacktestTrade],
+                              initial_balance: float) -> pd.Series:
+        """محاسبه منحنی سرمایه"""
+        if not trades:
+            return pd.Series([initial_balance])
+        
+        # ایجاد تایم‌سریس از معاملات
+        trade_dates = []
+        balances = []
+        
+        current_balance = initial_balance
+        
+        for trade in trades:
+            if trade.exit_time and trade.pnl is not None:
+                trade_dates.append(trade.exit_time)
+                current_balance += trade.pnl
+                balances.append(current_balance)
+        
+        return pd.Series(balances, index=trade_dates)
+    
+    def _calculate_max_drawdown(self, equity_curve: pd.Series) -> float:
+        """محاسبه حداکثر drawdown"""
+        if len(equity_curve) < 2:
+            return 0.0
+        
+        peak = equity_curve.expanding().max()
+        drawdown = (equity_curve - peak) / peak
+        max_drawdown = drawdown.min()
+        
+        return abs(max_drawdown) * 100  # به درصد
+    
+    def _calculate_sharpe_ratio(self, returns: pd.Series, risk_free_rate: float = 0.02) -> float:
+        """محاسبه Sharpe Ratio"""
+        if len(returns) < 2:
+            return 0.0
+        
+        excess_returns = returns - (risk_free_rate / 365)  # نرخ بدون risk روزانه
+        sharpe = excess_returns.mean() / excess_returns.std() if excess_returns.std() > 0 else 0
+        
+        return sharpe * np.sqrt(365)  # سالیانه
+    
+    def _calculate_calmar_ratio(self, total_return: float, max_drawdown: float) -> float:
+        """محاسبه Calmar Ratio"""
+        if max_drawdown == 0:
+            return float('inf')
+        
+        return total_return / max_drawdown
+    
+    def _get_empty_result(self, symbol: str, timeframe: str) -> BacktestResult:
+        """نتیجه خالی برای بکتست ناموفق"""
+        return BacktestResult(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=datetime.now(),
+            end_date=datetime.now(),
+            initial_balance=self.initial_balance,
+            final_balance=self.initial_balance,
+            total_return=0.0,
+            total_trades=0,
+            winning_trades=0,
+            losing_trades=0,
+            win_rate=0.0,
+            avg_profit=0.0,
+            avg_loss=0.0,
+            profit_factor=0.0,
+            max_drawdown=0.0,
+            sharpe_ratio=0.0,
+            calmar_ratio=0.0,
+            trades=[],
+            equity_curve=pd.Series([self.initial_balance]),
+            daily_returns=pd.Series([0.0])
+        )
