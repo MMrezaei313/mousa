@@ -1,0 +1,260 @@
+"""
+ابزارهای تحلیل بکتست
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+import logging
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class TradeAnalysis:
+    """تحلیل معاملات"""
+    best_trade: Dict
+    worst_trade: Dict
+    avg_holding_period: float
+    profit_by_month: Dict[str, float]
+    profit_by_weekday: Dict[str, float]
+    consecutive_wins: int
+    consecutive_losses: int
+
+class BacktestAnalyzer:
+    """تحلیل‌گر نتایج بکتست"""
+    
+    def __init__(self):
+        self.metrics = {}
+    
+    def analyze_trades(self, trades: List) -> TradeAnalysis:
+        """تحلیل جزئیات معاملات"""
+        try:
+            if not trades:
+                return self._get_empty_analysis()
+            
+            # بهترین و بدترین معامله
+            best_trade = max(trades, key=lambda x: x.pnl or 0)
+            worst_trade = min(trades, key=lambda x: x.pnl or 0)
+            
+            # میانگین مدت نگهداری
+            holding_periods = []
+            for trade in trades:
+                if trade.exit_time and trade.entry_time:
+                    period = (trade.exit_time - trade.entry_time).total_seconds() / 3600  # ساعت
+                    holding_periods.append(period)
+            
+            avg_holding_period = np.mean(holding_periods) if holding_periods else 0
+            
+            # سود بر اساس ماه
+            profit_by_month = self._calculate_profit_by_month(trades)
+            
+            # سود بر اساس روز هفته
+            profit_by_weekday = self._calculate_profit_by_weekday(trades)
+            
+            # بیشترین برد/باخت متوالی
+            consecutive_wins, consecutive_losses = self._calculate_consecutive_results(trades)
+            
+            return TradeAnalysis(
+                best_trade=self._trade_to_dict(best_trade),
+                worst_trade=self._trade_to_dict(worst_trade),
+                avg_holding_period=avg_holding_period,
+                profit_by_month=profit_by_month,
+                profit_by_weekday=profit_by_weekday,
+                consecutive_wins=consecutive_wins,
+                consecutive_losses=consecutive_losses
+            )
+            
+        except Exception as e:
+            logger.error(f"خطا در تحلیل معاملات: {e}")
+            return self._get_empty_analysis()
+    
+    def calculate_advanced_metrics(self, equity_curve: pd.Series,
+                                 daily_returns: pd.Series) -> Dict:
+        """محاسبه معیارهای پیشرفته"""
+        try:
+            metrics = {}
+            
+            # Sortino Ratio
+            metrics['sortino_ratio'] = self._calculate_sortino_ratio(daily_returns)
+            
+            # Omega Ratio
+            metrics['omega_ratio'] = self._calculate_omega_ratio(daily_returns)
+            
+            # Sharpe Ratio مختلف
+            metrics['sharpe_1y'] = self._calculate_rolling_sharpe(daily_returns, 252)
+            metrics['sharpe_6m'] = self._calculate_rolling_sharpe(daily_returns, 126)
+            metrics['sharpe_3m'] = self._calculate_rolling_sharpe(daily_returns, 63)
+            
+            # Volatility
+            metrics['volatility_annual'] = daily_returns.std() * np.sqrt(365)
+            metrics['volatility_monthly'] = daily_returns.std() * np.sqrt(30)
+            
+            # Value at Risk (VaR)
+            metrics['var_95'] = self._calculate_var(daily_returns, 0.95)
+            metrics['var_99'] = self._calculate_var(daily_returns, 0.99)
+            
+            # Expected Shortfall (CVaR)
+            metrics['cvar_95'] = self._calculate_cvar(daily_returns, 0.95)
+            metrics['cvar_99'] = self._calculate_cvar(daily_returns, 0.99)
+            
+            # Maximum Favorable Excursion (MFE) & Maximum Adverse Excursion (MAE)
+            mfe, mae = self._calculate_mfe_mae(equity_curve)
+            metrics['mfe'] = mfe
+            metrics['mae'] = mae
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"خطا در محاسبه معیارهای پیشرفته: {e}")
+            return {}
+    
+    def _calculate_profit_by_month(self, trades: List) -> Dict[str, float]:
+        """محاسبه سود بر اساس ماه"""
+        monthly_profits = {}
+        
+        for trade in trades:
+            if trade.exit_time and trade.pnl is not None:
+                month_key = trade.exit_time.strftime("%Y-%m")
+                monthly_profits[month_key] = monthly_profits.get(month_key, 0) + trade.pnl
+        
+        return monthly_profits
+    
+    def _calculate_profit_by_weekday(self, trades: List) -> Dict[str, float]:
+        """محاسبه سود بر اساس روز هفته"""
+        weekday_profits = {
+            "Monday": 0, "Tuesday": 0, "Wednesday": 0,
+            "Thursday": 0, "Friday": 0, "Saturday": 0, "Sunday": 0
+        }
+        
+        weekday_map = {
+            0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday",
+            4: "Friday", 5: "Saturday", 6: "Sunday"
+        }
+        
+        for trade in trades:
+            if trade.exit_time and trade.pnl is not None:
+                weekday = trade.exit_time.weekday()
+                weekday_name = weekday_map[weekday]
+                weekday_profits[weekday_name] += trade.pnl
+        
+        return weekday_profits
+    
+    def _calculate_consecutive_results(self, trades: List) -> Tuple[int, int]:
+        """محاسبه بیشترین برد/باخت متوالی"""
+        if not trades:
+            return 0, 0
+        
+        current_wins = 0
+        current_losses = 0
+        max_wins = 0
+        max_losses = 0
+        
+        for trade in trades:
+            if trade.pnl is not None:
+                if trade.pnl > 0:
+                    current_wins += 1
+                    current_losses = 0
+                    max_wins = max(max_wins, current_wins)
+                else:
+                    current_losses += 1
+                    current_wins = 0
+                    max_losses = max(max_losses, current_losses)
+        
+        return max_wins, max_losses
+    
+    def _calculate_sortino_ratio(self, returns: pd.Series, 
+                               risk_free_rate: float = 0.02) -> float:
+        """محاسبه Sortino Ratio"""
+        if len(returns) < 2:
+            return 0.0
+        
+        excess_returns = returns - (risk_free_rate / 365)
+        downside_returns = excess_returns[excess_returns < 0]
+        
+        if len(downside_returns) == 0:
+            return float('inf')
+        
+        sortino = excess_returns.mean() / downside_returns.std()
+        return sortino * np.sqrt(365)
+    
+    def _calculate_omega_ratio(self, returns: pd.Series, 
+                             threshold: float = 0.0) -> float:
+        """محاسبه Omega Ratio"""
+        if len(returns) == 0:
+            return 0.0
+        
+        gains = returns[returns > threshold].sum()
+        losses = abs(returns[returns <= threshold].sum())
+        
+        if losses == 0:
+            return float('inf')
+        
+        return gains / losses
+    
+    def _calculate_rolling_sharpe(self, returns: pd.Series, 
+                                window: int) -> float:
+        """محاسبه Rolling Sharpe Ratio"""
+        if len(returns) < window:
+            return 0.0
+        
+        rolling_sharpe = returns.rolling(window).mean() / returns.rolling(window).std()
+        return rolling_sharpe.iloc[-1] * np.sqrt(365) if not rolling_sharpe.empty else 0.0
+    
+    def _calculate_var(self, returns: pd.Series, 
+                     confidence: float = 0.95) -> float:
+        """محاسبه Value at Risk"""
+        if len(returns) == 0:
+            return 0.0
+        
+        return np.percentile(returns, (1 - confidence) * 100)
+    
+    def _calculate_cvar(self, returns: pd.Series,
+                      confidence: float = 0.95) -> float:
+        """محاسبه Conditional Value at Risk"""
+        if len(returns) == 0:
+            return 0.0
+        
+        var = self._calculate_var(returns, confidence)
+        cvar = returns[returns <= var].mean()
+        
+        return cvar if not np.isnan(cvar) else 0.0
+    
+    def _calculate_mfe_mae(self, equity_curve: pd.Series) -> Tuple[float, float]:
+        """محاسبه MFE و MAE"""
+        if len(equity_curve) < 2:
+            return 0.0, 0.0
+        
+        peaks = equity_curve.expanding().max()
+        troughs = equity_curve.expanding().min()
+        
+        mfe = ((equity_curve - equity_curve.shift()) / equity_curve.shift()).max()
+        mae = ((equity_curve - equity_curve.shift()) / equity_curve.shift()).min()
+        
+        return mfe * 100, mae * 100  # به درصد
+    
+    def _trade_to_dict(self, trade) -> Dict:
+        """تبدیل معامله به دیکشنری"""
+        return {
+            "entry_time": trade.entry_time.isoformat() if trade.entry_time else None,
+            "exit_time": trade.exit_time.isoformat() if trade.exit_time else None,
+            "entry_price": trade.entry_price,
+            "exit_price": trade.exit_price,
+            "position_type": trade.position_type,
+            "pnl": trade.pnl,
+            "pnl_percentage": trade.pnl_percentage,
+            "confidence": trade.confidence
+        }
+    
+    def _get_empty_analysis(self) -> TradeAnalysis:
+        """تحلیل خالی"""
+        return TradeAnalysis(
+            best_trade={},
+            worst_trade={},
+            avg_holding_period=0.0,
+            profit_by_month={},
+            profit_by_weekday={},
+            consecutive_wins=0,
+            consecutive_losses=0
+        )
