@@ -1,0 +1,64 @@
+"""
+فکتوری برای ایجاد بروکرها
+"""
+
+from typing import Optional
+from mousatrade.brokers.base_broker import BaseBroker
+from mousatrade.brokers.xchief import XChiefBroker
+from mousatrade.brokers.binance import BinanceBroker
+from mousatrade.brokers.bybit import BybitBroker
+from mousatrade.brokers.okx import OKXBroker
+import logging
+
+logger = logging.getLogger(__name__)
+
+class BrokerFactory:
+    """فکتوری برای ایجاد نمونه‌های بروکر"""
+    
+    def __init__(self):
+        self.available_brokers = {
+            'xchief': XChiefBroker,
+            'binance': BinanceBroker,
+            'bybit': BybitBroker,
+            'okx': OKXBroker
+        }
+    
+    def create_broker(self, broker_name: str, api_key: str = None, 
+                     secret: str = None) -> Optional[BaseBroker]:
+        """ایجاد نمونه بروکر"""
+        try:
+            broker_class = self.available_brokers.get(broker_name.lower())
+            if broker_class:
+                broker = broker_class(api_key, secret)
+                
+                # احراز هویت خودکار
+                if broker.authenticate():
+                    logger.info(f"✅ بروکر {broker_name} با موفقیت ایجاد شد")
+                    return broker
+                else:
+                    logger.warning(f"⚠️ بروکر {broker_name} ایجاد شد اما احراز هویت نشد")
+                    return broker
+            else:
+                logger.error(f"❌ بروکر {broker_name} پشتیبانی نمی‌شود")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ خطا در ایجاد بروکر {broker_name}: {e}")
+            return None
+    
+    def get_available_brokers(self) -> list:
+        """دریافت لیست بروکرهای available"""
+        return list(self.available_brokers.keys())
+    
+    def get_broker_info(self, broker_name: str) -> dict:
+        """دریافت اطلاعات بروکر"""
+        broker_class = self.available_brokers.get(broker_name.lower())
+        if broker_class:
+            # ایجاد نمونه موقت برای دریافت اطلاعات
+            temp_broker = broker_class()
+            return {
+                "name": temp_broker.name,
+                "supported_pairs": temp_broker.get_supported_pairs(),
+                "requires_auth": temp_broker.api_key is not None
+            }
+        return {}
