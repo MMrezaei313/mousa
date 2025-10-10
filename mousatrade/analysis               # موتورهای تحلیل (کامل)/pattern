@@ -1,0 +1,192 @@
+"""
+تشخیص الگوهای قیمتی
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Optional
+import logging
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class PatternType(Enum):
+    HAMMER = "HAMMER"
+    ENGULFING_BULLISH = "ENGULFING_BULLISH"
+    ENGULFING_BEARISH = "ENGULFING_BEARISH"
+    DOJI = "DOJI"
+    MORNING_STAR = "MORNING_STAR"
+    EVENING_STAR = "EVENING_STAR"
+    HEAD_SHOULDERS = "HEAD_SHOULDERS"
+    DOUBLE_TOP = "DOUBLE_TOP"
+    DOUBLE_BOTTOM = "DOUBLE_BOTTOM"
+
+class PatternAnalyzer:
+    """تحلیل‌گر الگوهای قیمتی"""
+    
+    def __init__(self):
+        self.patterns = {}
+    
+    def detect_patterns(self, df: pd.DataFrame) -> List[Dict]:
+        """تشخیص الگوهای قیمتی"""
+        try:
+            patterns = []
+            
+            # تشخیص الگوهای شمعی
+            candlestick_patterns = self._detect_candlestick_patterns(df)
+            patterns.extend(candlestick_patterns)
+            
+            # تشخیص الگوهای نموداری
+            chart_patterns = self._detect_chart_patterns(df)
+            patterns.extend(chart_patterns)
+            
+            return patterns
+            
+        except Exception as e:
+            logger.error(f"خطا در تشخیص الگوها: {e}")
+            return []
+    
+    def _detect_candlestick_patterns(self, df: pd.DataFrame) -> List[Dict]:
+        """تشخیص الگوهای شمعی"""
+        patterns = []
+        
+        try:
+            # بررسی آخرین 5 کندل
+            recent_data = df.tail(5)
+            
+            for i in range(len(recent_data) - 1):
+                current = recent_data.iloc[i]
+                prev = recent_data.iloc[i-1] if i > 0 else None
+                
+                # چکش
+                if self._is_hammer(current):
+                    patterns.append({
+                        "type": PatternType.HAMMER.value,
+                        "name": "چکش",
+                        "direction": "BULLISH",
+                        "confidence": 0.7,
+                        "position": i
+                    })
+                
+                # انگالفینگ صعودی
+                if prev is not None and self._is_bullish_engulfing(prev, current):
+                    patterns.append({
+                        "type": PatternType.ENGULFING_BULLISH.value,
+                        "name": "Engulfing صعودی",
+                        "direction": "BULLISH", 
+                        "confidence": 0.8,
+                        "position": i
+                    })
+                
+                # انگالفینگ نزولی
+                if prev is not None and self._is_bearish_engulfing(prev, current):
+                    patterns.append({
+                        "type": PatternType.ENGULFING_BEARISH.value,
+                        "name": "Engulfing نزولی",
+                        "direction": "BEARISH",
+                        "confidence": 0.8,
+                        "position": i
+                    })
+                
+                # دوجی
+                if self._is_doji(current):
+                    patterns.append({
+                        "type": PatternType.DOJI.value,
+                        "name": "دوجی",
+                        "direction": "NEUTRAL",
+                        "confidence": 0.6,
+                        "position": i
+                    })
+            
+            return patterns
+            
+        except Exception as e:
+            logger.warning(f"خطا در تشخیص الگوهای شمعی: {e}")
+            return []
+    
+    def _is_hammer(self, candle) -> bool:
+        """تشخیص کندل چکش"""
+        body_size = abs(candle['close'] - candle['open'])
+        total_range = candle['high'] - candle['low']
+        
+        if total_range == 0:
+            return False
+        
+        lower_shadow = min(candle['open'], candle['close']) - candle['low']
+        upper_shadow = candle['high'] - max(candle['open'], candle['close'])
+        
+        # چکش: سایه پایینی بلند، سایه بالایی کوتاه
+        return (lower_shadow >= 2 * body_size and 
+                upper_shadow <= body_size * 0.5 and
+                body_size / total_range < 0.3)
+    
+    def _is_bullish_engulfing(self, prev_candle, current_candle) -> bool:
+        """تشخیص انگالفینگ صعودی"""
+        prev_body = prev_candle['close'] - prev_candle['open']
+        current_body = current_candle['close'] - current_candle['open']
+        
+        return (prev_body < 0 and  # کندل قبلی نزولی
+                current_body > 0 and  # کندل فعلی صعودی
+                current_candle['open'] < prev_candle['close'] and
+                current_candle['close'] > prev_candle['open'])
+    
+    def _is_bearish_engulfing(self, prev_candle, current_candle) -> bool:
+        """تشخیص انگالفینگ نزولی"""
+        prev_body = prev_candle['close'] - prev_candle['open']
+        current_body = current_candle['close'] - current_candle['open']
+        
+        return (prev_body > 0 and  # کندل قبلی صعودی
+                current_body < 0 and  # کندل فعلی نزولی
+                current_candle['open'] > prev_candle['close'] and
+                current_candle['close'] < prev_candle['open'])
+    
+    def _is_doji(self, candle) -> bool:
+        """تشخیص کندل دوجی"""
+        body_size = abs(candle['close'] - candle['open'])
+        total_range = candle['high'] - candle['low']
+        
+        if total_range == 0:
+            return False
+        
+        return body_size / total_range < 0.1  # بدنه بسیار کوچک
+    
+    def _detect_chart_patterns(self, df: pd.DataFrame) -> List[Dict]:
+        """تشخیص الگوهای نموداری"""
+        patterns = []
+        
+        try:
+            # تشخیص سقف دوقلو
+            double_top = self._detect_double_top(df)
+            if double_top:
+                patterns.append(double_top)
+            
+            # تشخیص کف دوقلو
+            double_bottom = self._detect_double_bottom(df)
+            if double_bottom:
+                patterns.append(double_bottom)
+            
+            # تشخیص سر و شانه
+            head_shoulders = self._detect_head_shoulders(df)
+            if head_shoulders:
+                patterns.append(head_shoulders)
+            
+            return patterns
+            
+        except Exception as e:
+            logger.warning(f"خطا در تشخیص الگوهای نموداری: {e}")
+            return []
+    
+    def _detect_double_top(self, df: pd.DataFrame) -> Optional[Dict]:
+        """تشخیص سقف دوقلو"""
+        # پیاده‌سازی ساده - در نسخه کامل باید بهبود یابد
+        return None
+    
+    def _detect_double_bottom(self, df: pd.DataFrame) -> Optional[Dict]:
+        """تشخیص کف دوقلو"""
+        # پیاده‌سازی ساده - در نسخه کامل باید بهبود یابد
+        return None
+    
+    def _detect_head_shoulders(self, df: pd.DataFrame) -> Optional[Dict]:
+        """تشخیص الگوی سر و شانه"""
+        # پیاده‌سازی ساده - در نسخه کامل باید بهبود یابد
+        return None
