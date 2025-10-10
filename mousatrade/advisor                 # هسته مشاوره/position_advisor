@@ -1,1 +1,398 @@
 
+"""
+مشاور پوزیشن MousaTrade
+تولید پیشنهادهای معاملاتی بر اساس تحلیل‌های ترکیبی
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Tuple, Optional
+from datetime import datetime
+import logging
+from dataclasses import dataclass
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class PositionType(Enum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+    NEUTRAL = "NEUTRAL"
+
+class RiskLevel(Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    VERY_HIGH = "VERY_HIGH"
+
+@dataclass
+class PositionAdvice:
+    symbol: str
+    position_type: PositionType
+    confidence: float
+    entry_range: Tuple[float, float]
+    targets: List[float]
+    stop_loss: float
+    risk_reward_ratio: float
+    risk_level: RiskLevel
+    timeframe: str
+    reasoning: Dict
+    timestamp: datetime
+
+class PositionAdvisor:
+    """مشاور پوزیشن‌های معاملاتی"""
+    
+    def __init__(self):
+        self.min_confidence = 0.6
+        self.max_risk_reward = 0.1  # حداکثر ریسک 10%
+        self.position_sizing_rules = {
+            RiskLevel.LOW: 0.05,      # 5% سرمایه
+            RiskLevel.MEDIUM: 0.03,   # 3% سرمایه  
+            RiskLevel.HIGH: 0.01,     # 1% سرمایه
+            RiskLevel.VERY_HIGH: 0.005 # 0.5% سرمایه
+        }
+    
+    def get_position_advice(self, symbol: str, market_data: pd.DataFrame,
+                          technical_analysis: Dict, fundamental_analysis: Dict,
+                          sentiment_analysis: Dict) -> PositionAdvice:
+        """دریافت پیشنهاد پوزیشن بر اساس تحلیل‌های ترکیبی"""
+        try:
+            # تحلیل تکنیکال برای تعیین جهت
+            technical_direction = self._analyze_technical_direction(technical_analysis)
+            
+            # تحلیل فاندامنتال برای اعتبارسنجی
+            fundamental_score = fundamental_analysis.get('fundamental_score', 0.5)
+            
+            # تحلیل احساسات برای تایید
+            sentiment_score = sentiment_analysis.get('overall_score', 0.5)
+            
+            # ترکیب تحلیل‌ها برای تصمیم‌گیری نهایی
+            position_type, confidence = self._combine_analyses(
+                technical_direction, fundamental_score, sentiment_score
+            )
+            
+            # اگر اطمینان کافی نیست، پوزیشن خنثی
+            if confidence < self.min_confidence:
+                position_type = PositionType.NEUTRAL
+                confidence = 0.5
+            
+            # محاسبه نقاط ورود، اهداف و حد ضرر
+            current_price = market_data['close'].iloc[-1]
+            entry_range = self._calculate_entry_range(current_price, position_type, technical_analysis)
+            targets = self._calculate_targets(current_price, position_type, technical_analysis)
+            stop_loss = self._calculate_stop_loss(current_price, position_type, technical_analysis)
+            
+            # محاسبه نسبت ریسک به ریوارد
+            risk_reward_ratio = self._calculate_risk_reward_ratio(
+                current_price, entry_range, targets, stop_loss, position_type
+            )
+            
+            # ارزیابی سطح ریسک
+            risk_level = self._assess_risk_level(
+                confidence, risk_reward_ratio, technical_analysis, fundamental_analysis
+            )
+            
+            # ایجاد پیشنهاد نهایی
+            advice = PositionAdvice(
+                symbol=symbol,
+                position_type=position_type,
+                confidence=round(confidence, 2),
+                entry_range=entry_range,
+                targets=targets,
+                stop_loss=stop_loss,
+                risk_reward_ratio=round(risk_reward_ratio, 2),
+                risk_level=risk_level,
+                timeframe="1h",
+                reasoning={
+                    "technical": technical_direction,
+                    "fundamental_score": fundamental_score,
+                    "sentiment_score": sentiment_score,
+                    "combined_confidence": confidence
+                },
+                timestamp=datetime.now()
+            )
+            
+            logger.info(f"🎯 پیشنهاد پوزیشن برای {symbol}: {position_type.value} با اطمینان {confidence}")
+            
+            return advice
+            
+        except Exception as e:
+            logger.error(f"❌ خطا در تولید پیشنهاد پوزیشن برای {symbol}: {e}")
+            return self._get_neutral_advice(symbol)
+    
+    def _analyze_technical_direction(self, technical_analysis: Dict) -> Dict:
+        """تعیین جهت بر اساس تحلیل تکنیکال"""
+        try:
+            trend = technical_analysis.get('trend', {})
+            signals = technical_analysis.get('signals', [])
+            summary = technical_analysis.get('summary', {})
+            
+            # تحلیل روند
+            trend_direction = trend.get('direction', 'بدون روند مشخص')
+            trend_strength = trend.get('strength', 0.5)
+            
+            # شمارش سیگنال‌ها
+            buy_signals = len([s for s in signals if hasattr(s, 'signal') and s.signal == 'BUY'])
+            sell_signals = len([s for s in signals if hasattr(s, 'signal') and s.signal == 'SELL'])
+            
+            # تحلیل نهایی تکنیکال
+            if trend_direction == "صعودی" and buy_signals > sell_signals and trend_strength > 0.6:
+                return {"direction": "LONG", "strength": trend_strength}
+            elif trend_direction == "نزولی" and sell_signals > buy_signals and trend_strength > 0.6:
+                return {"direction": "SHORT", "strength": trend_strength}
+            else:
+                return {"direction": "NEUTRAL", "strength": 0.5}
+                
+        except Exception as e:
+            logger.warning(f"خطا در تحلیل جهت تکنیکال: {e}")
+            return {"direction": "NEUTRAL", "strength": 0.5}
+    
+    def _combine_analyses(self, technical_direction: Dict, 
+                         fundamental_score: float, sentiment_score: float) -> Tuple[PositionType, float]:
+        """ترکیب تحلیل‌های مختلف برای تصمیم‌گیری نهایی"""
+        
+        tech_direction = technical_direction.get('direction', 'NEUTRAL')
+        tech_strength = technical_direction.get('strength', 0.5)
+        
+        # وزن‌دهی به تحلیل‌ها
+        tech_weight = 0.5
+        fundamental_weight = 0.3
+        sentiment_weight = 0.2
+        
+        # محاسبه امتیاز ترکیبی
+        if tech_direction == "LONG":
+            base_score = 0.7
+        elif tech_direction == "SHORT":
+            base_score = 0.3
+        else:
+            base_score = 0.5
+        
+        # اعمال وزن‌ها
+        combined_score = (
+            base_score * tech_weight +
+            fundamental_score * fundamental_weight +
+            sentiment_score * sentiment_weight
+        )
+        
+        # تعدیل بر اساس قدرت تحلیل تکنیکال
+        combined_score = combined_score * (0.5 + tech_strength * 0.5)
+        
+        # تعیین جهت و اطمینان نهایی
+        if combined_score > 0.6:
+            position_type = PositionType.LONG
+            confidence = min(combined_score, 0.95)
+        elif combined_score < 0.4:
+            position_type = PositionType.SHORT
+            confidence = min(1 - combined_score, 0.95)
+        else:
+            position_type = PositionType.NEUTRAL
+            confidence = 0.5
+        
+        return position_type, confidence
+    
+    def _calculate_entry_range(self, current_price: float, position_type: PositionType,
+                             technical_analysis: Dict) -> Tuple[float, float]:
+        """محاسبه محدوده ورود"""
+        
+        support_resistance = technical_analysis.get('support_resistance', {})
+        volatility = technical_analysis.get('volatility', {}).get('daily_volatility', 0.02)
+        
+        if position_type == PositionType.LONG:
+            # برای لانگ: ورود در محدوده حمایت یا قیمت فعلی
+            nearest_support = support_resistance.get('nearest_support', current_price * 0.98)
+            entry_low = min(current_price * 0.995, nearest_support)
+            entry_high = current_price * 1.01
+            
+        elif position_type == PositionType.SHORT:
+            # برای شورت: ورود در محدوده مقاومت یا قیمت فعلی
+            nearest_resistance = support_resistance.get('nearest_resistance', current_price * 1.02)
+            entry_low = current_price * 0.99
+            entry_high = max(current_price * 1.005, nearest_resistance)
+            
+        else:  # NEUTRAL
+            entry_low = current_price * 0.99
+            entry_high = current_price * 1.01
+        
+        # تعدیل بر اساس نوسان
+        volatility_adjustment = volatility * 2
+        entry_low = entry_low * (1 - volatility_adjustment)
+        entry_high = entry_high * (1 + volatility_adjustment)
+        
+        return (round(entry_low, 4), round(entry_high, 4))
+    
+    def _calculate_targets(self, current_price: float, position_type: PositionType,
+                          technical_analysis: Dict) -> List[float]:
+        """محاسبه اهداف قیمتی"""
+        
+        support_resistance = technical_analysis.get('support_resistance', {})
+        volatility = technical_analysis.get('volatility', {}).get('daily_volatility', 0.02)
+        
+        if position_type == PositionType.LONG:
+            # اهداف برای لانگ: سطوح مقاومت
+            resistance_levels = support_resistance.get('resistance_levels', [])
+            if resistance_levels:
+                # استفاده از سطوح مقاومت واقعی
+                targets = [level for level in resistance_levels if level > current_price][:3]
+            else:
+                # اهداف پیش‌فرض بر اساس نوسان
+                target1 = current_price * (1 + volatility * 3)  # 3 برابر نوسان
+                target2 = current_price * (1 + volatility * 5)  # 5 برابر نوسان
+                target3 = current_price * (1 + volatility * 8)  # 8 برابر نوسان
+                targets = [target1, target2, target3]
+                
+        elif position_type == PositionType.SHORT:
+            # اهداف برای شورت: سطوح حمایت
+            support_levels = support_resistance.get('support_levels', [])
+            if support_levels:
+                # استفاده از سطوح حمایت واقعی
+                targets = [level for level in support_levels if level < current_price][:3]
+            else:
+                # اهداف پیش‌فرض بر اساس نوسان
+                target1 = current_price * (1 - volatility * 3)  # 3 برابر نوسان
+                target2 = current_price * (1 - volatility * 5)  # 5 برابر نوسان
+                target3 = current_price * (1 - volatility * 8)  # 8 برابر نوسان
+                targets = [target1, target2, target3]
+                
+        else:  # NEUTRAL
+            targets = []
+        
+        # گرد کردن و محدود کردن به ۲ هدف
+        targets = [round(target, 4) for target in targets][:2]
+        return targets
+    
+    def _calculate_stop_loss(self, current_price: float, position_type: PositionType,
+                           technical_analysis: Dict) -> float:
+        """محاسبه حد ضرر"""
+        
+        support_resistance = technical_analysis.get('support_resistance', {})
+        volatility = technical_analysis.get('volatility', {}).get('daily_volatility', 0.02)
+        
+        if position_type == PositionType.LONG:
+            # استاپ لاس برای لانگ: زیر حمایت یا بر اساس نوسان
+            nearest_support = support_resistance.get('nearest_support', current_price * 0.98)
+            stop_loss_based_support = nearest_support * 0.99  # کمی زیر حمایت
+            stop_loss_based_volatility = current_price * (1 - volatility * 4)  # 4 برابر نوسان
+            
+            stop_loss = min(stop_loss_based_support, stop_loss_based_volatility)
+            
+        elif position_type == PositionType.SHORT:
+            # استاپ لاس برای شورت: بالای مقاومت یا بر اساس نوسان
+            nearest_resistance = support_resistance.get('nearest_resistance', current_price * 1.02)
+            stop_loss_based_resistance = nearest_resistance * 1.01  # کمی بالای مقاومت
+            stop_loss_based_volatility = current_price * (1 + volatility * 4)  # 4 برابر نوسان
+            
+            stop_loss = max(stop_loss_based_resistance, stop_loss_based_volatility)
+            
+        else:  # NEUTRAL
+            stop_loss = 0.0
+        
+        return round(stop_loss, 4) if stop_loss else 0.0
+    
+    def _calculate_risk_reward_ratio(self, current_price: float, entry_range: Tuple[float, float],
+                                   targets: List[float], stop_loss: float, 
+                                   position_type: PositionType) -> float:
+        """محاسبه نسبت ریسک به ریوارد"""
+        
+        if not targets or stop_loss == 0:
+            return 0.0
+        
+        # میانگین نقطه ورود
+        avg_entry = (entry_range[0] + entry_range[1]) / 2
+        
+        if position_type == PositionType.LONG:
+            # ریسک: فاصله ورود تا استاپ لاس
+            risk = avg_entry - stop_loss
+            # ریوارد: فاصله ورود تا اولین هدف
+            reward = targets[0] - avg_entry
+            
+        elif position_type == PositionType.SHORT:
+            # ریسک: فاصله استاپ لاس تا ورود
+            risk = stop_loss - avg_entry
+            # ریوارد: فاصله اولین هدف تا ورود
+            reward = avg_entry - targets[0]
+            
+        else:
+            return 0.0
+        
+        if risk <= 0:
+            return 0.0
+        
+        risk_reward_ratio = risk / (avg_entry if avg_entry > 0 else 1)
+        return min(risk_reward_ratio, 0.2)  # حداکثر 20% ریسک
+    
+    def _assess_risk_level(self, confidence: float, risk_reward_ratio: float,
+                          technical_analysis: Dict, fundamental_analysis: Dict) -> RiskLevel:
+        """ارزیابی سطح ریسک"""
+        
+        risk_score = 0.0
+        
+        # تاثیر اطمینان
+        risk_score += (1 - confidence) * 0.4
+        
+        # تاثیر نسبت ریسک به ریوارد
+        risk_score += min(risk_reward_ratio * 5, 0.4)  # نرمالایز به 0-0.4
+        
+        # تاثیر نوسان
+        volatility = technical_analysis.get('volatility', {}).get('daily_volatility', 0.02)
+        risk_score += min(volatility * 10, 0.2)  # نرمالایز به 0-0.2
+        
+        # تعیین سطح ریسک نهایی
+        if risk_score < 0.3:
+            return RiskLevel.LOW
+        elif risk_score < 0.5:
+            return RiskLevel.MEDIUM
+        elif risk_score < 0.7:
+            return RiskLevel.HIGH
+        else:
+            return RiskLevel.VERY_HIGH
+    
+    def get_position_size(self, account_balance: float, risk_level: RiskLevel) -> float:
+        """محاسبه سایز پوزیشن بر اساس سطح ریسک"""
+        risk_percentage = self.position_sizing_rules.get(risk_level, 0.01)
+        return account_balance * risk_percentage
+    
+    def validate_advice(self, advice: PositionAdvice) -> bool:
+        """اعتبارسنجی پیشنهاد پوزیشن"""
+        try:
+            # بررسی اطمینان
+            if advice.confidence < self.min_confidence:
+                return False
+            
+            # بررسی نسبت ریسک به ریوارد
+            if advice.risk_reward_ratio > self.max_risk_reward:
+                return False
+            
+            # بررسی منطقی بودن اهداف
+            if advice.position_type == PositionType.LONG:
+                if any(target <= advice.entry_range[0] for target in advice.targets):
+                    return False
+                if advice.stop_loss >= advice.entry_range[0]:
+                    return False
+                    
+            elif advice.position_type == PositionType.SHORT:
+                if any(target >= advice.entry_range[1] for target in advice.targets):
+                    return False
+                if advice.stop_loss <= advice.entry_range[1]:
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.warning(f"خطا در اعتبارسنجی پیشنهاد: {e}")
+            return False
+    
+    def _get_neutral_advice(self, symbol: str) -> PositionAdvice:
+        """پیشنهاد خنثی در صورت خطا"""
+        return PositionAdvice(
+            symbol=symbol,
+            position_type=PositionType.NEUTRAL,
+            confidence=0.5,
+            entry_range=(0, 0),
+            targets=[],
+            stop_loss=0,
+            risk_reward_ratio=0,
+            risk_level=RiskLevel.LOW,
+            timeframe="1h",
+            reasoning={"error": "تحلیل ناموفق بود"},
+            timestamp=datetime.now()
+        )
