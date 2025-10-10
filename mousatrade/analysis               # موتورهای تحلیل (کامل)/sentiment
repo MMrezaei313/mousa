@@ -1,0 +1,405 @@
+"""
+ماژول تحلیل احساسات MousaTrade
+تحلیل احساسات بازار از منابع مختلف
+"""
+
+import requests
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Optional
+from textblob import TextBlob
+import logging
+from datetime import datetime, timedelta
+import re
+from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
+
+class SentimentAnalyzer:
+    """آنالیزور احساسات بازار"""
+    
+    def __init__(self):
+        self.sources = {
+            'news': True,
+            'social_media': True,
+            'technical_sentiment': True,
+            'market_data': True
+        }
+        
+    def analyze(self, symbol: str) -> Dict:
+        """تحلیل احساسات برای یک نماد"""
+        try:
+            sentiment_scores = []
+            
+            # تحلیل احساسات اخبار
+            if self.sources['news']:
+                news_sentiment = self._analyze_news_sentiment(symbol)
+                sentiment_scores.append(news_sentiment.get('score', 0.5))
+            
+            # تحلیل احساسات شبکه‌های اجتماعی
+            if self.sources['social_media']:
+                social_sentiment = self._analyze_social_sentiment(symbol)
+                sentiment_scores.append(social_sentiment.get('score', 0.5))
+            
+            # تحلیل احساسات تکنیکال
+            if self.sources['technical_sentiment']:
+                technical_sentiment = self._analyze_technical_sentiment(symbol)
+                sentiment_scores.append(technical_sentiment.get('score', 0.5))
+            
+            # تحلیل احساسات از داده‌های بازار
+            if self.sources['market_data']:
+                market_sentiment = self._analyze_market_sentiment(symbol)
+                sentiment_scores.append(market_sentiment.get('score', 0.5))
+            
+            # محاسبه میانگین وزنی
+            if sentiment_scores:
+                overall_score = np.mean(sentiment_scores)
+            else:
+                overall_score = 0.5
+            
+            return {
+                "symbol": symbol,
+                "overall_sentiment": self._score_to_sentiment(overall_score),
+                "overall_score": round(overall_score, 2),
+                "components": {
+                    "news": news_sentiment,
+                    "social_media": social_sentiment,
+                    "technical": technical_sentiment,
+                    "market_data": market_sentiment
+                },
+                "timestamp": datetime.now().isoformat(),
+                "confidence": self._calculate_confidence(sentiment_scores)
+            }
+            
+        except Exception as e:
+            logger.error(f"خطا در تحلیل احساسات {symbol}: {e}")
+            return self._default_sentiment_analysis(symbol)
+    
+    def _analyze_news_sentiment(self, symbol: str) -> Dict:
+        """تحلیل احساسات اخبار"""
+        try:
+            # جمع‌آوری اخبار مرتبط
+            news_articles = self._fetch_news_articles(symbol)
+            
+            if not news_articles:
+                return {"score": 0.5, "source": "news", "confidence": 0.3}
+            
+            # تحلیل احساسات هر مقاله
+            sentiments = []
+            for article in news_articles:
+                sentiment = self._analyze_text_sentiment(article.get('title', '') + ' ' + article.get('summary', ''))
+                sentiments.append(sentiment)
+            
+            # محاسبه میانگین
+            avg_sentiment = np.mean(sentiments) if sentiments else 0.5
+            
+            return {
+                "score": round(avg_sentiment, 2),
+                "source": "news",
+                "confidence": min(len(sentiments) / 10, 1.0),
+                "articles_analyzed": len(sentiments),
+                "trend": self._detect_sentiment_trend(sentiments),
+                "key_topics": self._extract_key_topics(news_articles)
+            }
+            
+        except Exception as e:
+            logger.warning(f"خطا در تحلیل احساسات اخبار: {e}")
+            return {"score": 0.5, "source": "news", "confidence": 0.1}
+    
+    def _analyze_social_sentiment(self, symbol: str) -> Dict:
+        """تحلیل احساسات شبکه‌های اجتماعی"""
+        try:
+            # شبیه‌سازی داده‌های شبکه‌های اجتماعی
+            twitter_sentiment = self._simulate_twitter_sentiment(symbol)
+            reddit_sentiment = self._simulate_reddit_sentiment(symbol)
+            telegram_sentiment = self._simulate_telegram_sentiment(symbol)
+            
+            sentiments = [
+                twitter_sentiment.get('score', 0.5),
+                reddit_sentiment.get('score', 0.5),
+                telegram_sentiment.get('score', 0.5)
+            ]
+            
+            avg_sentiment = np.mean(sentiments)
+            
+            return {
+                "score": round(avg_sentiment, 2),
+                "source": "social_media",
+                "confidence": 0.6,
+                "platforms": {
+                    "twitter": twitter_sentiment,
+                    "reddit": reddit_sentiment,
+                    "telegram": telegram_sentiment
+                },
+                "engagement_metrics": {
+                    "total_mentions": twitter_sentiment.get('mention_count', 0) + 
+                                     reddit_sentiment.get('post_count', 0),
+                    "sentiment_distribution": {
+                        "positive": len([s for s in sentiments if s > 0.6]),
+                        "neutral": len([s for s in sentiments if 0.4 <= s <= 0.6]),
+                        "negative": len([s for s in sentiments if s < 0.4])
+                    }
+                }
+            }
+            
+        except Exception as e:
+            logger.warning(f"خطا در تحلیل احساسات اجتماعی: {e}")
+            return {"score": 0.5, "source": "social_media", "confidence": 0.1}
+    
+    def _analyze_technical_sentiment(self, symbol: str) -> Dict:
+        """تحلیل احساسات از داده‌های تکنیکال"""
+        try:
+            # شاخص‌های تکنیکال برای تحلیل احساسات
+            rsi_sentiment = self._rsi_to_sentiment(symbol)
+            volume_sentiment = self._volume_to_sentiment(symbol)
+            price_action_sentiment = self._price_action_to_sentiment(symbol)
+            volatility_sentiment = self._volatility_to_sentiment(symbol)
+            
+            sentiments = [
+                rsi_sentiment,
+                volume_sentiment,
+                price_action_sentiment,
+                volatility_sentiment
+            ]
+            
+            avg_sentiment = np.mean(sentiments)
+            
+            return {
+                "score": round(avg_sentiment, 2),
+                "source": "technical",
+                "confidence": 0.8,
+                "components": {
+                    "rsi_sentiment": rsi_sentiment,
+                    "volume_sentiment": volume_sentiment,
+                    "price_action_sentiment": price_action_sentiment,
+                    "volatility_sentiment": volatility_sentiment
+                },
+                "interpretation": self._interpret_technical_sentiment(sentiments)
+            }
+            
+        except Exception as e:
+            logger.warning(f"خطا در تحلیل احساسات تکنیکال: {e}")
+            return {"score": 0.5, "source": "technical", "confidence": 0.1}
+    
+    def _analyze_market_sentiment(self, symbol: str) -> Dict:
+        """تحلیل احساسات از داده‌های بازار"""
+        try:
+            # شاخص‌های بازار برای تحلیل احساسات
+            fear_greed = self._get_fear_greed_index()
+            market_momentum = self._analyze_market_momentum(symbol)
+            institutional_sentiment = self._analyze_institutional_sentiment(symbol)
+            retail_sentiment = self._analyze_retail_sentiment(symbol)
+            
+            sentiments = [
+                fear_greed.get('normalized_score', 0.5),
+                market_momentum,
+                institutional_sentiment,
+                retail_sentiment
+            ]
+            
+            avg_sentiment = np.mean(sentiments)
+            
+            return {
+                "score": round(avg_sentiment, 2),
+                "source": "market_data",
+                "confidence": 0.7,
+                "components": {
+                    "fear_greed_index": fear_greed,
+                    "market_momentum": market_momentum,
+                    "institutional_sentiment": institutional_sentiment,
+                    "retail_sentiment": retail_sentiment
+                },
+                "market_regime": self._detect_market_regime(sentiments)
+            }
+            
+        except Exception as e:
+            logger.warning(f"خطا در تحلیل احساسات بازار: {e}")
+            return {"score": 0.5, "source": "market_data", "confidence": 0.1}
+    
+    def _analyze_text_sentiment(self, text: str) -> float:
+        """تحلیل احساسات متن"""
+        try:
+            if not text or len(text.strip()) < 10:
+                return 0.5
+            
+            # تحلیل با TextBlob
+            blob = TextBlob(text)
+            polarity = blob.sentiment.polarity  # -1 تا 1
+            
+            # تبدیل به مقیاس 0-1
+            return (polarity + 1) / 2
+            
+        except:
+            return 0.5
+    
+    def _fetch_news_articles(self, symbol: str) -> List[Dict]:
+        """جمع‌آوری اخبار مرتبط"""
+        # در عمل نیاز به API خبری دارد
+        # اینجا شبیه‌سازی می‌شود
+        return [
+            {
+                'title': f'تحلیل قیمت {symbol}',
+                'summary': 'روند صعودی قوی در بازار مشاهده می‌شود',
+                'source': 'شبیه‌سازی',
+                'date': datetime.now()
+            },
+            {
+                'title': f'اخبار فاندامنتال {symbol}',
+                'summary': 'پروژه در حال توسعه قوی است',
+                'source': 'شبیه‌سازی', 
+                'date': datetime.now()
+            }
+        ]
+    
+    def _simulate_twitter_sentiment(self, symbol: str) -> Dict:
+        """شبیه‌سازی احساسات توییتر"""
+        return {
+            "score": 0.65,
+            "mention_count": 1500,
+            "sentiment_trend": "improving",
+            "influencer_impact": 0.7
+        }
+    
+    def _simulate_reddit_sentiment(self, symbol: str) -> Dict:
+        """شبیه‌سازی احساسات رددیت"""
+        return {
+            "score": 0.58,
+            "post_count": 120,
+            "comment_sentiment": 0.6,
+            "subreddit_activity": "high"
+        }
+    
+    def _simulate_telegram_sentiment(self, symbol: str) -> Dict:
+        """شبیه‌سازی احساسات تلگرام"""
+        return {
+            "score": 0.62,
+            "member_count": 25000,
+            "message_volume": "high",
+            "community_engagement": 0.8
+        }
+    
+    def _rsi_to_sentiment(self, symbol: str) -> float:
+        """تبدیل RSI به احساسات"""
+        # RSI پایین: احساسات منفی (خریداری)
+        # RSI بالا: احساسات مثبت (فروشی)
+        # اینجا شبیه‌سازی می‌شود
+        return 0.6
+    
+    def _volume_to_sentiment(self, symbol: str) -> float:
+        """تبدیل حجم به احساسات"""
+        return 0.55
+    
+    def _price_action_to_sentiment(self, symbol: str) -> float:
+        """تبدیل پرایس اکشن به احساسات"""
+        return 0.7
+    
+    def _volatility_to_sentiment(self, symbol: str) -> float:
+        """تبدیل نوسان به احساسات"""
+        return 0.5
+    
+    def _get_fear_greed_index(self) -> Dict:
+        """شاخص ترس و طمع"""
+        return {
+            "value": 55,
+            "normalized_score": 0.55,
+            "description": "احساسات خنثی"
+        }
+    
+    def _analyze_market_momentum(self, symbol: str) -> float:
+        """تحلیل مومنتوم بازار"""
+        return 0.6
+    
+    def _analyze_institutional_sentiment(self, symbol: str) -> float:
+        """تحلیل احساسات نهادی"""
+        return 0.7
+    
+    def _analyze_retail_sentiment(self, symbol: str) -> float:
+        """تحلیل احساسات خرد"""
+        return 0.5
+    
+    def _score_to_sentiment(self, score: float) -> str:
+        """تبدیل امتیاز به احساسات"""
+        if score >= 0.7:
+            return "بسیار مثبت"
+        elif score >= 0.6:
+            return "مثبت"
+        elif score >= 0.5:
+            return "خنثی"
+        elif score >= 0.4:
+            return "منفی"
+        else:
+            return "بسیار منفی"
+    
+    def _detect_sentiment_trend(self, sentiments: List[float]) -> str:
+        """تشخیص روند احساسات"""
+        if len(sentiments) < 2:
+            return "ثابت"
+        
+        recent = sentiments[-5:]  # ۵ مورد اخیر
+        if len(recent) < 2:
+            return "ثابت"
+        
+        trend = np.polyfit(range(len(recent)), recent, 1)[0]
+        
+        if trend > 0.01:
+            return "در حال بهبود"
+        elif trend < -0.01:
+            return "در حال افول"
+        else:
+            return "ثابت"
+    
+    def _extract_key_topics(self, articles: List[Dict]) -> List[str]:
+        """استخراج موضوعات کلیدی"""
+        # شبیه‌سازی
+        return ["توسعه فنی", "قیمت", "پذیرش بازار"]
+    
+    def _interpret_technical_sentiment(self, sentiments: List[float]) -> str:
+        """تفسیر احساسات تکنیکال"""
+        avg = np.mean(sentiments)
+        
+        if avg > 0.6:
+            return "سیگنال‌های تکنیکال مثبت"
+        elif avg < 0.4:
+            return "سیگنال‌های تکنیکال منفی"
+        else:
+            return "سیگنال‌های تکنیکال مختلط"
+    
+    def _detect_market_regime(self, sentiments: List[float]) -> str:
+        """تشخیص رژیم بازار"""
+        avg = np.mean(sentiments)
+        
+        if avg > 0.7:
+            return "طمع"
+        elif avg > 0.6:
+            return "خوش‌بینی"
+        elif avg > 0.4:
+            return "خنثی"
+        elif avg > 0.3:
+            return "ترس"
+        else:
+            return "هراس"
+    
+    def _calculate_confidence(self, sentiment_scores: List[float]) -> float:
+        """محاسبه اطمینان از تحلیل احساسات"""
+        if not sentiment_scores:
+            return 0.1
+        
+        # اطمینان بر اساس تعداد منابع و سازگاری آنها
+        score_std = np.std(sentiment_scores)
+        consistency = 1 - min(score_std * 2, 1.0)  # هرچه پراکندگی کمتر، اطمینان بیشتر
+        
+        source_count = len(sentiment_scores)
+        source_factor = min(source_count / 4, 1.0)  # حداکثر ۴ منبع
+        
+        return round(consistency * source_factor * 0.8, 2)  # حداکثر ۰.۸
+    
+    def _default_sentiment_analysis(self, symbol: str) -> Dict:
+        """تحلیل احساسات پیش‌فرض"""
+        return {
+            "symbol": symbol,
+            "overall_sentiment": "نامشخص",
+            "overall_score": 0.5,
+            "components": {},
+            "timestamp": datetime.now().isoformat(),
+            "confidence": 0.1
+        }
