@@ -1,1 +1,495 @@
 
+"""
+مشاور مدیریت ریسک MousaTrade
+"""
+
+import numpy as np
+from typing import Dict, List, Tuple, Optional
+from datetime import datetime, timedelta
+from enum import Enum
+import logging
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+class RiskAdvisorLevel(Enum):
+    VERY_CONSERVATIVE = "VERY_CONSERVATIVE"  # بسیار محافظه‌کار
+    CONSERVATIVE = "CONSERVATIVE"            # محافظه‌کار
+    MODERATE = "MODERATE"                    # متعادل
+    AGGRESSIVE = "AGGRESSIVE"                # تهاجمی
+    VERY_AGGRESSIVE = "VERY_AGGRESSIVE"     # بسیار تهاجمی
+
+class MarketCondition(Enum):
+    NORMAL = "NORMAL"                        # شرایط عادی
+    VOLATILE = "VOLATILE"                    # پرنوسان
+    TRENDING = "TRENDING"                    # روند قوی
+    SIDEWAYS = "SIDEWAYS"                   # رنج
+    CRASH = "CRASH"                         # سقوط شدید
+    RALLY = "RALLY"                         # رشد شدید
+
+@dataclass
+class RiskAssessment:
+    """ارزیابی ریسک"""
+    symbol: str
+    risk_score: float  # 0-100
+    risk_level: RiskAdvisorLevel
+    market_condition: MarketCondition
+    volatility_risk: float
+    liquidity_risk: float
+    concentration_risk: float
+    leverage_risk: float
+    recommendations: List[str]
+    max_position_size: float
+    suggested_leverage: float
+    stop_loss_adjustment: float
+
+@dataclass
+class PortfolioRisk:
+    """ریسک پرتفوی"""
+    total_risk_score: float
+    diversification_score: float
+    correlation_risk: float
+    sector_exposure: Dict[str, float]
+    risk_concentration: List[Tuple[str, float]]
+    suggested_allocations: Dict[str, float]
+
+class RiskAdvisor:
+    """مشاور مدیریت ریسک"""
+    
+    def __init__(self):
+        self.risk_profiles = {
+            RiskAdvisorLevel.VERY_CONSERVATIVE: {
+                "max_position_size": 0.02,    # 2%
+                "max_leverage": 1,
+                "stop_loss_multiplier": 1.5,
+                "target_risk_reward": 3.0
+            },
+            RiskAdvisorLevel.CONSERVATIVE: {
+                "max_position_size": 0.05,    # 5%
+                "max_leverage": 2,
+                "stop_loss_multiplier": 1.2,
+                "target_risk_reward": 2.5
+            },
+            RiskAdvisorLevel.MODERATE: {
+                "max_position_size": 0.08,    # 8%
+                "max_leverage": 3,
+                "stop_loss_multiplier": 1.0,
+                "target_risk_reward": 2.0
+            },
+            RiskAdvisorLevel.AGGRESSIVE: {
+                "max_position_size": 0.12,    # 12%
+                "max_leverage": 5,
+                "stop_loss_multiplier": 0.8,
+                "target_risk_reward": 1.5
+            },
+            RiskAdvisorLevel.VERY_AGGRESSIVE: {
+                "max_position_size": 0.15,    # 15%
+                "max_leverage": 10,
+                "stop_loss_multiplier": 0.6,
+                "target_risk_reward": 1.2
+            }
+        }
+    
+    def assess_symbol_risk(self, symbol: str, 
+                          market_data: Dict,
+                          technical_analysis: Dict,
+                          fundamental_analysis: Dict,
+                          user_risk_profile: RiskAdvisorLevel = RiskAdvisorLevel.MODERATE) -> RiskAssessment:
+        """ارزیابی ریسک برای یک نماد"""
+        try:
+            # محاسبه ریسک نوسان
+            volatility_risk = self._calculate_volatility_risk(market_data, technical_analysis)
+            
+            # محاسبه ریسک نقدشوندگی
+            liquidity_risk = self._calculate_liquidity_risk(market_data, fundamental_analysis)
+            
+            # محاسبه ریسک تمرکز
+            concentration_risk = self._calculate_concentration_risk(symbol, fundamental_analysis)
+            
+            # محاسبه ریسک اهرم
+            leverage_risk = self._calculate_leverage_risk(technical_analysis)
+            
+            # تشخیص شرایط بازار
+            market_condition = self._detect_market_condition(technical_analysis, volatility_risk)
+            
+            # محاسبه امتیاز ریسک کلی
+            risk_score = self._calculate_overall_risk_score(
+                volatility_risk, liquidity_risk, concentration_risk, leverage_risk
+            )
+            
+            # تعیین سطح ریسک
+            risk_level = self._determine_risk_level(risk_score)
+            
+            # تولید پیشنهادات
+            recommendations = self._generate_risk_recommendations(
+                risk_score, risk_level, market_condition,
+                volatility_risk, liquidity_risk, concentration_risk, leverage_risk
+            )
+            
+            # محاسبه سایز پوزیشن پیشنهادی
+            max_position_size = self._calculate_max_position_size(
+                risk_level, user_risk_profile, volatility_risk
+            )
+            
+            # محاسبه اهرم پیشنهادی
+            suggested_leverage = self._calculate_suggested_leverage(
+                risk_level, user_risk_profile, leverage_risk
+            )
+            
+            # تنظیم حد ضرر
+            stop_loss_adjustment = self._calculate_stop_loss_adjustment(
+                risk_level, volatility_risk
+            )
+            
+            return RiskAssessment(
+                symbol=symbol,
+                risk_score=risk_score,
+                risk_level=risk_level,
+                market_condition=market_condition,
+                volatility_risk=volatility_risk,
+                liquidity_risk=liquidity_risk,
+                concentration_risk=concentration_risk,
+                leverage_risk=leverage_risk,
+                recommendations=recommendations,
+                max_position_size=max_position_size,
+                suggested_leverage=suggested_leverage,
+                stop_loss_adjustment=stop_loss_adjustment
+            )
+            
+        except Exception as e:
+            logger.error(f"خطا در ارزیابی ریسک {symbol}: {e}")
+            return self._get_default_risk_assessment(symbol)
+    
+    def assess_portfolio_risk(self, portfolio: Dict, 
+                            market_data: Dict) -> PortfolioRisk:
+        """ارزیابی ریسک پرتفوی"""
+        try:
+            # محاسبه ریسک تنوع
+            diversification_score = self._calculate_diversification_score(portfolio)
+            
+            # محاسبه ریسک همبستگی
+            correlation_risk = self._calculate_correlation_risk(portfolio, market_data)
+            
+            # تحلیل مواجهه سکتوری
+            sector_exposure = self._analyze_sector_exposure(portfolio)
+            
+            # شناسایی تمرکز ریسک
+            risk_concentration = self._identify_risk_concentration(portfolio)
+            
+            # محاسبه امتیاز ریسک کلی پرتفوی
+            total_risk_score = self._calculate_portfolio_risk_score(
+                diversification_score, correlation_risk, risk_concentration
+            )
+            
+            # پیشنهاد تخصیص‌های جدید
+            suggested_allocations = self._suggest_portfolio_allocations(
+                portfolio, total_risk_score, diversification_score
+            )
+            
+            return PortfolioRisk(
+                total_risk_score=total_risk_score,
+                diversification_score=diversification_score,
+                correlation_risk=correlation_risk,
+                sector_exposure=sector_exposure,
+                risk_concentration=risk_concentration,
+                suggested_allocations=suggested_allocations
+            )
+            
+        except Exception as e:
+            logger.error(f"خطا در ارزیابی ریسک پرتفوی: {e}")
+            return self._get_default_portfolio_risk()
+    
+    def _calculate_volatility_risk(self, market_data: Dict, 
+                                 technical_analysis: Dict) -> float:
+        """محاسبه ریسک نوسان"""
+        try:
+            volatility = technical_analysis.get('volatility', {})
+            daily_volatility = volatility.get('daily_volatility', 0.02)
+            historical_volatility = volatility.get('annualized_volatility', 0.3)
+            
+            # نرمالایز کردن نوسان (0-1)
+            vol_risk = min(daily_volatility * 10, 1.0)
+            
+            # تعدیل بر اساس رژیم نوسان
+            volatility_regime = volatility.get('volatility_regime', 'پایین')
+            if volatility_regime == 'بالا':
+                vol_risk *= 1.5
+            elif volatility_regime == 'پایین':
+                vol_risk *= 0.7
+            
+            return min(vol_risk, 1.0)
+            
+        except Exception as e:
+            logger.warning(f"خطا در محاسبه ریسک نوسان: {e}")
+            return 0.5
+    
+    def _calculate_liquidity_risk(self, market_data: Dict,
+                                fundamental_analysis: Dict) -> float:
+        """محاسبه ریسک نقدشوندگی"""
+        try:
+            volume_24h = fundamental_analysis.get('metrics', {}).get('volume_24h', 0)
+            market_cap = fundamental_analysis.get('metrics', {}).get('market_cap', 0)
+            
+            if market_cap <= 0:
+                return 0.8  # ریسک بالا برای پروژه‌های کوچک
+            
+            # نسبت حجم به مارکت‌کپ
+            volume_to_mcap = volume_24h / market_cap if market_cap > 0 else 0
+            
+            if volume_to_mcap > 0.1:
+                liquidity_risk = 0.1  # نقدشوندگی عالی
+            elif volume_to_mcap > 0.05:
+                liquidity_risk = 0.3  # نقدشوندگی خوب
+            elif volume_to_mcap > 0.01:
+                liquidity_risk = 0.6  # نقدشوندگی متوسط
+            else:
+                liquidity_risk = 0.9  # نقدشوندگی ضعیف
+            
+            return liquidity_risk
+            
+        except Exception as e:
+            logger.warning(f"خطا در محاسبه ریسک نقدشوندگی: {e}")
+            return 0.5
+    
+    def _calculate_concentration_risk(self, symbol: str,
+                                   fundamental_analysis: Dict) -> float:
+        """محاسبه ریسک تمرکز"""
+        try:
+            market_cap_rank = fundamental_analysis.get('metrics', {}).get('market_cap_rank', 999)
+            
+            if market_cap_rank <= 10:
+                return 0.1  # پروژه‌های برتر - ریسک کم
+            elif market_cap_rank <= 50:
+                return 0.3  # پروژه‌های بزرگ - ریسک متوسط
+            elif market_cap_rank <= 100:
+                return 0.6  # پروژه‌های متوسط - ریسک نسبتاً بالا
+            else:
+                return 0.9  # پروژه‌های کوچک - ریسک بالا
+                
+        except Exception as e:
+            logger.warning(f"خطا در محاسبه ریسک تمرکز: {e}")
+            return 0.5
+    
+    def _calculate_leverage_risk(self, technical_analysis: Dict) -> float:
+        """محاسبه ریسک اهرم"""
+        try:
+            trend = technical_analysis.get('trend', {})
+            trend_strength = trend.get('strength', 0.5)
+            
+            # در روندهای قوی، ریسک اهرم کمتر است
+            if trend_strength > 0.7:
+                leverage_risk = 0.3
+            elif trend_strength > 0.5:
+                leverage_risk = 0.5
+            elif trend_strength > 0.3:
+                leverage_risk = 0.7
+            else:
+                leverage_risk = 0.9  # در بازار بدون روند، اهرم خطرناک است
+            
+            return leverage_risk
+            
+        except Exception as e:
+            logger.warning(f"خطا در محاسبه ریسک اهرم: {e}")
+            return 0.5
+    
+    def _detect_market_condition(self, technical_analysis: Dict,
+                               volatility_risk: float) -> MarketCondition:
+        """تشخیص شرایط بازار"""
+        try:
+            trend = technical_analysis.get('trend', {})
+            trend_direction = trend.get('direction', 'بدون روند مشخص')
+            trend_strength = trend.get('strength', 0.5)
+            
+            if volatility_risk > 0.8:
+                return MarketCondition.VOLATILE
+            elif trend_strength > 0.7:
+                if trend_direction == "صعودی":
+                    return MarketCondition.RALLY
+                else:
+                    return MarketCondition.CRASH
+            elif trend_strength < 0.3:
+                return MarketCondition.SIDEWAYS
+            elif trend_strength > 0.5:
+                return MarketCondition.TRENDING
+            else:
+                return MarketCondition.NORMAL
+                
+        except Exception as e:
+            logger.warning(f"خطا در تشخیص شرایط بازار: {e}")
+            return MarketCondition.NORMAL
+    
+    def _calculate_overall_risk_score(self, volatility_risk: float,
+                                   liquidity_risk: float,
+                                   concentration_risk: float,
+                                   leverage_risk: float) -> float:
+        """محاسبه امتیاز ریسک کلی"""
+        # وزن‌دهی به فاکتورهای ریسک
+        weights = {
+            'volatility': 0.3,
+            'liquidity': 0.25,
+            'concentration': 0.25,
+            'leverage': 0.2
+        }
+        
+        overall_risk = (
+            volatility_risk * weights['volatility'] +
+            liquidity_risk * weights['liquidity'] +
+            concentration_risk * weights['concentration'] +
+            leverage_risk * weights['leverage']
+        )
+        
+        return min(overall_risk * 100, 100)
+    
+    def _determine_risk_level(self, risk_score: float) -> RiskAdvisorLevel:
+        """تعیین سطح ریسک"""
+        if risk_score < 20:
+            return RiskAdvisorLevel.VERY_CONSERVATIVE
+        elif risk_score < 40:
+            return RiskAdvisorLevel.CONSERVATIVE
+        elif risk_score < 60:
+            return RiskAdvisorLevel.MODERATE
+        elif risk_score < 80:
+            return RiskAdvisorLevel.AGGRESSIVE
+        else:
+            return RiskAdvisorLevel.VERY_AGGRESSIVE
+    
+    def _generate_risk_recommendations(self, risk_score: float,
+                                    risk_level: RiskAdvisorLevel,
+                                    market_condition: MarketCondition,
+                                    volatility_risk: float,
+                                    liquidity_risk: float,
+                                    concentration_risk: float,
+                                    leverage_risk: float) -> List[str]:
+        """تولید پیشنهادات مدیریت ریسک"""
+        recommendations = []
+        
+        # پیشنهادات بر اساس سطح ریسک
+        if risk_level in [RiskAdvisorLevel.AGGRESSIVE, RiskAdvisorLevel.VERY_AGGRESSIVE]:
+            recommendations.append("⚠️ سطح ریسک بالا - کاهش سایز پوزیشن پیشنهاد می‌شود")
+        
+        # پیشنهادات بر اساس شرایط بازار
+        if market_condition == MarketCondition.VOLATILE:
+            recommendations.append("📈 بازار پرنوسان - استفاده از استاپ‌لاس گسترده")
+        elif market_condition in [MarketCondition.CRASH, MarketCondition.RALLY]:
+            recommendations.append("🎯 بازار در حالت افراط - احتیاط در معاملات")
+        
+        # پیشنهادات بر اساس ریسک نقدشوندگی
+        if liquidity_risk > 0.7:
+            recommendations.append("💧 نقدشوندگی پایین - معاملات با حجم کم")
+        
+        # پیشنهادات بر اساس ریسک تمرکز
+        if concentration_risk > 0.7:
+            recommendations.append("🎪 تمرکز بالا - متنوع‌سازی پرتفوی")
+        
+        # پیشنهادات بر اساس ریسک اهرم
+        if leverage_risk > 0.7:
+            recommendations.append("⚖️ شرایط نامناسب برای اهرم - معامله بدون اهرم")
+        
+        if not recommendations:
+            recommendations.append("✅ شرایط مناسب برای معامله - رعایت مدیریت ریسک")
+        
+        return recommendations
+    
+    def _calculate_max_position_size(self, risk_level: RiskAdvisorLevel,
+                                   user_risk_profile: RiskAdvisorLevel,
+                                   volatility_risk: float) -> float:
+        """محاسبه حداکثر سایز پوزیشن"""
+        base_size = self.risk_profiles[user_risk_profile]["max_position_size"]
+        
+        # تعدیل بر اساس ریسک نماد
+        if risk_level in [RiskAdvisorLevel.AGGRESSIVE, RiskAdvisorLevel.VERY_AGGRESSIVE]:
+            base_size *= 0.5  # کاهش 50% برای نمادهای پرریسک
+        elif risk_level in [RiskAdvisorLevel.VERY_CONSERVATIVE, RiskAdvisorLevel.CONSERVATIVE]:
+            base_size *= 1.2  # افزایش 20% برای نمادهای کم‌ریسک
+        
+        # تعدیل بر اساس نوسان
+        if volatility_risk > 0.7:
+            base_size *= 0.7  # کاهش برای نوسان بالا
+        
+        return min(base_size, 0.2)  # حداکثر 20%
+    
+    def _calculate_suggested_leverage(self, risk_level: RiskAdvisorLevel,
+                                    user_risk_profile: RiskAdvisorLevel,
+                                    leverage_risk: float) -> float:
+        """محاسبه اهرم پیشنهادی"""
+        base_leverage = self.risk_profiles[user_risk_profile]["max_leverage"]
+        
+        # تعدیل بر اساس ریسک نماد
+        if risk_level in [RiskAdvisorLevel.AGGRESSIVE, RiskAdvisorLevel.VERY_AGGRESSIVE]:
+            base_leverage *= 0.5
+        
+        # تعدیل بر اساس ریسک اهرم
+        if leverage_risk > 0.7:
+            base_leverage = 1  # بدون اهرم
+        
+        return max(base_leverage, 1)  # حداقل 1x
+    
+    def _calculate_stop_loss_adjustment(self, risk_level: RiskAdvisorLevel,
+                                      volatility_risk: float) -> float:
+        """محاسبه تنظیمات حد ضرر"""
+        base_multiplier = self.risk_profiles[risk_level]["stop_loss_multiplier"]
+        
+        # تعدیل بر اساس نوسان
+        if volatility_risk > 0.7:
+            base_multiplier *= 1.3  # استاپ گسترده‌تر برای نوسان بالا
+        elif volatility_risk < 0.3:
+            base_multiplier *= 0.8  # استاپ tighter برای نوسان پایین
+        
+        return base_multiplier
+    
+    # متدهای پرتفوی (پیاده‌سازی ساده‌شده)
+    def _calculate_diversification_score(self, portfolio: Dict) -> float:
+        """محاسبه امتیاز تنوع"""
+        return 0.7  # شبیه‌سازی
+    
+    def _calculate_correlation_risk(self, portfolio: Dict, market_data: Dict) -> float:
+        """محاسبه ریسک همبستگی"""
+        return 0.3  # شبیه‌سازی
+    
+    def _analyze_sector_exposure(self, portfolio: Dict) -> Dict[str, float]:
+        """تحلیل مواجهه سکتوری"""
+        return {"DeFi": 0.4, "Layer1": 0.3, "NFT": 0.2, "Other": 0.1}
+    
+    def _identify_risk_concentration(self, portfolio: Dict) -> List[Tuple[str, float]]:
+        """شناسایی تمرکز ریسک"""
+        return [("BTC", 0.3), ("ETH", 0.25), ("ADA", 0.15)]
+    
+    def _calculate_portfolio_risk_score(self, diversification: float,
+                                      correlation: float,
+                                      concentration: List) -> float:
+        """محاسبه امتیاز ریسک پرتفوی"""
+        return 45.0  # شبیه‌سازی
+    
+    def _suggest_portfolio_allocations(self, portfolio: Dict,
+                                     risk_score: float,
+                                     diversification: float) -> Dict[str, float]:
+        """پیشنهاد تخصیص‌های پرتفوی"""
+        return {"BTC": 0.4, "ETH": 0.3, "DOT": 0.1, "LINK": 0.1, "ADA": 0.1}
+    
+    def _get_default_risk_assessment(self, symbol: str) -> RiskAssessment:
+        """ارزیابی ریسک پیش‌فرض"""
+        return RiskAssessment(
+            symbol=symbol,
+            risk_score=50.0,
+            risk_level=RiskAdvisorLevel.MODERATE,
+            market_condition=MarketCondition.NORMAL,
+            volatility_risk=0.5,
+            liquidity_risk=0.5,
+            concentration_risk=0.5,
+            leverage_risk=0.5,
+            recommendations=["تحلیل ریسک در دسترس نیست"],
+            max_position_size=0.05,
+            suggested_leverage=2.0,
+            stop_loss_adjustment=1.0
+        )
+    
+    def _get_default_portfolio_risk(self) -> PortfolioRisk:
+        """ریسک پرتفوی پیش‌فرض"""
+        return PortfolioRisk(
+            total_risk_score=50.0,
+            diversification_score=0.5,
+            correlation_risk=0.5,
+            sector_exposure={},
+            risk_concentration=[],
+            suggested_allocations={}
+        )
