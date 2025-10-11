@@ -203,4 +203,28 @@ class ForexMarket(BaseMarket):
     
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an order"""
-        if not
+        if not self.connected:
+            return False
+        
+        try:
+            print(f"Canceled Forex order: {order_id}")
+            return True
+        except Exception as e:
+            print(f"Error canceling order {order_id}: {e}")
+            return False
+    
+    def get_order(self, order_id: str) -> Dict[str, Any]:
+        """Get order status"""
+        if not self.connected:
+            return {}
+        
+        try:
+            return {
+                'id': order_id,
+                'status': 'filled',
+                'filled_units': 100000,
+                'remaining_units': 0
+            }
+        except Exception as e:
+            print(f"Error getting order {order_id}: {e}")
+            return {}
