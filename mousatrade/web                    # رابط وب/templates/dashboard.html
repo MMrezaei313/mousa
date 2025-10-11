@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Mousa Trading Bot{% endblock %}
+
+{% block page_title %}Dashboard{% endblock %}
+
+{% block header_buttons %}
+<div class="btn-group">
+    <button class="btn btn-sm btn-outline-secondary" onclick="refreshDashboard()">
+        <i class="fas fa-sync-alt me-1"></i> Refresh
+    </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Key Metrics -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card metric-card h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Total Return</h6>
+                        <h3 class="text-success" id="total-return">+15.6%</h3>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-chart-line fa-2x text-success"></i>
+                    </div>
+                </div>
+                <p class="card-text"><small>Last 30 days</small></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card metric-card h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Active Strategies</h6>
+                        <h3 id="active-strategies">3</h3>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-chess-knight fa-2x text-primary"></i>
+                    </div>
+                </div>
+                <p class="card-text"><small>Running now</small></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card metric-card h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Sharpe Ratio</h6>
+                        <h3 class="text-info" id="sharpe-ratio">1.89</h3>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-balance-scale fa-2x text-info"></i>
+                    </div>
+                </div>
+                <p class="card-text"><small>Risk-adjusted</small></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card metric-card h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Today's Trades</h6>
+                        <h3 id="today-trades">12</h3>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-exchange-alt fa-2x text-warning"></i>
+                    </div>
+                </div>
+                <p class="card-text"><small>Executed today</small></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Equity Curve Chart -->
+    <div class="col-lg-8 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-chart-line me-2"></i>Portfolio Performance
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="equityChart" height="250"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="col-lg-4 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-list-alt me-2"></i>Recent Activity
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="list-group list-group-flush" id="recent-activity">
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <small>BTC/USD BUY</small>
+                            <br>
+                            <span class="text-success">+$245.50</span>
+                        </div>
+                        <small class="text-muted">2 min ago</small>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <small>ETH/USD SELL</small>
+                            <br>
+                            <span class="text-danger">-$120.30</span>
+                        </div>
+                        <small class="text-muted">15 min ago</small>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <small>Strategy Optimized</small>
+                            <br>
+                            <span class="text-info">MA Crossover</span>
+                        </div>
+                        <small class="text-muted">1 hour ago</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Strategy Performance -->
+    <div class="col-lg-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-trophy me-2"></i>Strategy Performance
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Strategy</th>
+                                <th>Return</th>
+                                <th>Sharpe</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="strategy-performance">
+                            <tr>
+                                <td>MA Crossover</td>
+                                <td class="text-success">+8.2%</td>
+                                <td>1.45</td>
+                                <td><span class="badge bg-success">Active</span></td>
+                            </tr>
+                            <tr>
+                                <td>RSI Mean Reversion</td>
+                                <td class="text-success">+5.1%</td>
+                                <td>1.12</td>
+                                <td><span class="badge bg-success">Active</span></td>
+                            </tr>
+                            <tr>
+                                <td>ML Ensemble</td>
+                                <td class="text-success">+12.3%</td>
+                                <td>1.89</td>
+                                <td><span class="badge bg-warning">Testing</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Market Overview -->
+    <div class="col-lg-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-globe me-2"></i>Market Overview
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Price</th>
+                                <th>Change</th>
+                                <th>Volume</th>
+                            </tr>
+                        </thead>
+                        <tbody id="market-overview">
+                            <tr>
+                                <td>BTC/USD</td>
+                                <td>$42,150</td>
+                                <td class="text-success">+2.3%</td>
+                                <td>24.5K</td>
+                            </tr>
+                            <tr>
+                                <td>ETH/USD</td>
+                                <td>$2,850</td>
+                                <td class="text-success">+1.8%</td>
+                                <td>18.2K</td>
+                            </tr>
+                            <tr>
+                                <td>ADA/USD</td>
+                                <td>$0.52</td>
+                                <td class="text-danger">-0.5%</td>
+                                <td>5.1K</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Initialize dashboard
+document.addEventListener('DOMContentLoaded', function() {
+    loadEquityChart();
+    loadDashboardData();
+});
+
+// Equity curve chart
+function loadEquityChart() {
+    const ctx = document.getElementById('equityChart').getContext('2d');
+    const chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+            datasets: [{
+                label: 'Portfolio Value',
+                data: [10000, 10500, 9800, 11200, 11500, 12000, 11800, 12500, 13000, 12800, 13500, 14000],
+                borderColor: '#667eea',
+                backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    grid: {
+                        drawBorder: false
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Load dashboard data
+async function loadDashboardData() {
+    try {
+        const response = await apiRequest('/api/system/status');
+        if (response.success) {
+            updateDashboardMetrics(response.status);
+        }
+    } catch (error) {
+        console.error('Failed to load dashboard data:', error);
+    }
+}
+
+// Update dashboard metrics
+function updateDashboardMetrics(data) {
+    // Update metrics with real data
+    document.getElementById('active-strategies').textContent = data.active_strategies || 3;
+    document.getElementById('today-trades').textContent = data.total_trades || 12;
+}
+
+// Refresh dashboard
+function refreshDashboard() {
+    loadDashboardData();
+    // Show loading state
+    const refreshBtn = document.querySelector('button[onclick="refreshDashboard()"]');
+    const originalHtml = refreshBtn.innerHTML;
+    refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Refreshing';
+    
+    setTimeout(() => {
+        refreshBtn.innerHTML = originalHtml;
+    }, 1000);
+}
+
+// Auto-refresh every 30 seconds
+setInterval(loadDashboardData, 30000);
+</script>
+{% endblock %}
