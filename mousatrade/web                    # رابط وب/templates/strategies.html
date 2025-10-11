@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+
+{% block title %}Strategies - Mousa Trading Bot{% endblock %}
+
+{% block page_title %}Trading Strategies{% endblock %}
+
+{% block header_buttons %}
+<div class="btn-group">
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createStrategyModal">
+        <i class="fas fa-plus me-1"></i> New Strategy
+    </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Strategy List -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-chess-knight me-2"></i>My Strategies
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover" id="strategies-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Return</th>
+                                <th>Sharpe</th>
+                                <th>Drawdown</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>
+                                    <strong>MA Crossover Pro</strong>
+                                    <br>
+                                    <small class="text-muted">BTC/USD, ETH/USD</small>
+                                </td>
+                                <td>Technical</td>
+                                <td><span class="badge bg-success">Active</span></td>
+                                <td class="text-success">+8.2%</td>
+                                <td>1.45</td>
+                                <td class="text-danger">-5.2%</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary" title="Edit">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-outline-success" title="Backtest">
+                                            <i class="fas fa-chart-line"></i>
+                                        </button>
+                                        <button class="btn btn-outline-warning" title="Optimize">
+                                            <i class="fas fa-cogs"></i>
+                                        </button>
+                                        <button class="btn btn-outline-danger" title="Stop">
+                                            <i class="fas fa-stop"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <strong>RSI Mean Reversion</strong>
+                                    <br>
+                                    <small class="text-muted">Major pairs</small>
+                                </td>
+                                <td>Technical</td>
+                                <td><span class="badge bg-success">Active</span></td>
+                                <td class="text-success">+5.1%</td>
+                                <td>1.12</td>
+                                <td class="text-danger">-7.8%</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-outline-success">
+                                            <i class="fas fa-chart-line"></i>
+                                        </button>
+                                        <button class="btn btn-outline-warning">
+                                            <i class="fas fa-cogs"></i>
+                                        </button>
+                                        <button class="btn btn-outline-danger">
+                                            <i class="fas fa-stop"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <strong>ML Ensemble v2</strong>
+                                    <br>
+                                    <small class="text-muted">All markets</small>
+                                </td>
+                                <td>Machine Learning</td>
+                                <td><span class="badge bg-warning">Testing</span></td>
+                                <td class="text-success">+12.3%</td>
+                                <td>1.89</td>
+                                <td class="text-danger">-4.1%</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-outline-success">
+                                            <i class="fas fa-chart-line"></i>
+                                        </button>
+                                        <button class="btn btn-outline-warning">
+                                            <i class="fas fa-cogs"></i>
+                                        </button>
+                                        <button class="btn btn-outline-success">
+                                            <i class="fas fa-play"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Strategy Modal -->
+<div class="modal fade" id="createStrategyModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create New Strategy</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="strategyForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Strategy Type</label>
+                                <select class="form-select" id="strategyType" required>
+                                    <option value="">Select type...</option>
+                                    <option value="technical">Technical Strategy</option>
+                                    <option value="ml">Machine Learning</option>
+                                    <option value="portfolio">Portfolio Strategy</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Strategy Name</label>
+                                <input type="text" class="form-control" id="strategyName" 
+                                       placeholder="Enter strategy name" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Technical Strategy Parameters -->
+                    <div id="technicalParams" class="strategy-params" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Technical Indicator</label>
+                                    <select class="form-select" id="technicalIndicator">
+                                        <option value="ma_crossover">Moving Average Crossover</option>
+                                        <option value="rsi">RSI Mean Reversion</option>
+                                        <option value="macd">MACD</option>
+                                        <option value="bollinger">Bollinger Bands</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Timeframe</label>
+                                    <select class="form-select" id="timeframe">
+                                        <option value="1m">1 Minute</option>
+                                        <option value="5m">5 Minutes</option>
+                                        <option value="15m">15 Minutes</option>
+                                        <option value="1h" selected>1 Hour</option>
+                                        <option value="4h">4 Hours</option>
+                                        <option value="1d">1 Day</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ML Strategy Parameters -->
+                    <div id="mlParams" class="strategy-params" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">ML Model</label>
+                                    <select class="form-select" id="mlModel">
+                                        <option value="random_forest">Random Forest</option>
+                                        <option value="xgboost">XGBoost</option>
+                                        <option value="svm">Support Vector Machine</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Lookback Period</label>
+                                    <input type="number" class="form-control" id="lookbackPeriod" 
+                                           value="50" min="10" max="200">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Description</label>
+                        <textarea class="form-control" id="strategyDescription" 
+                                  rows="3" placeholder="Strategy description..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="createStrategy()">
+                    <i class="fas fa-plus me-1"></i> Create Strategy
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Strategy type toggle
+document.getElementById('strategyType').addEventListener('change', function() {
+    // Hide all parameter sections
+    document.querySelectorAll('.strategy-params').forEach(section => {
+        section.style.display = 'none';
+    });
+    
+    // Show relevant parameter section
+    const type = this.value;
+    if (type === 'technical') {
+        document.getElementById('technicalParams').style.display = 'block';
+    } else if (type === 'ml') {
+        document.getElementById('mlParams').style.display = 'block';
+    }
+});
+
+// Create new strategy
+async function createStrategy() {
+    const form = document.getElementById('strategyForm');
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+
+    const strategyData = {
+        name: document.getElementById('strategyName').value,
+        type: document.getElementById('strategyType').value,
+        description: document.getElementById('strategyDescription').value
+    };
+
+    // Add type-specific parameters
+    if (strategyData.type === 'technical') {
+        strategyData.parameters = {
+            indicator: document.getElementById('technicalIndicator').value,
+            timeframe: document.getElementById('timeframe').value
+        };
+    } else if (strategyData.type === 'ml') {
+        strategyData.parameters = {
+            model: document.getElementById('mlModel').value,
+            lookback_period: parseInt(document.getElementById('lookbackPeriod').value)
+        };
+    }
+
+    try {
+        // Here you would make an API call to create the strategy
+        console.log('Creating strategy:', strategyData);
+        
+        // Show success message
+        alert('Strategy created successfully!');
+        
+        // Close modal and reset form
+        bootstrap.Modal.getInstance(document.getElementById('createStrategyModal')).hide();
+        form.reset();
+        
+        // Refresh strategy list
+        loadStrategies();
+        
+    } catch (error) {
+        console.error('Failed to create strategy:', error);
+        alert('Failed to create strategy. Please try again.');
+    }
+}
+
+// Load strategies from API
+async function loadStrategies() {
+    try {
+        const response = await apiRequest('/api/strategies/list');
+        if (response.success) {
+            // Update strategies table with real data
+            console.log('Strategies loaded:', response.strategies);
+        }
+    } catch (error) {
+        console.error('Failed to load strategies:', error);
+    }
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    loadStrategies();
+});
+</script>
+{% endblock %}
