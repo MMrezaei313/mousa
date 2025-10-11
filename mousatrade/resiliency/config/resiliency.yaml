@@ -1,0 +1,39 @@
+enabled: true
+log_level: INFO
+monitoring_enabled: true
+
+exchange_configs:
+  binance:
+    failure_threshold: 3
+    recovery_timeout: 120
+    half_open_success_threshold: 2
+    name: binance
+  robinhood:
+    failure_threshold: 5
+    recovery_timeout: 180
+    half_open_success_threshold: 3
+    name: robinhood
+  default:
+    failure_threshold: 5
+    recovery_timeout: 60
+    half_open_success_threshold: 2
+    name: default
+
+retry_config:
+  max_retries: 3
+  base_delay: 1.0
+  max_delay: 60.0
+  jitter: true
+
+health_check_config:
+  check_interval: 30
+  timeout: 10
+  critical_services:
+    - database
+    - primary_exchange
+    - data_feed
+
+fallback_config:
+  enabled: true
+  max_fallback_levels: 3
+  fallback_timeout: 30
