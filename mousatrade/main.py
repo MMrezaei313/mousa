@@ -1,267 +1,310 @@
 #!/usr/bin/env python3
 """
-MousaTrade Advisor - مشاور هوشمند ترید
-مشاور شما برای تحلیل بازار - نه ربات معامله‌گر!
+Mousa Trading System - Main Entry Point
+Enhanced with Multi-Market Support and Resiliency
 """
 
-import logging
 import asyncio
+import logging
 from typing import Dict, List, Optional
-from flask import Flask, render_template, request, jsonify, session
-from datetime import datetime, timedelta
 
-from mousatrade.advisor.position_advisor import PositionAdvisor
-from mousatrade.advisor.strategy_advisor import StrategyAdvisor
-from mousatrade.analysis.technical import TechnicalAnalyzer
-from mousatrade.analysis.fundamental import FundamentalAnalyzer
-from mousatrade.analysis.sentiment import SentimentAnalyzer
-from mousatrade.data.dataprovider import DataProvider
-from mousatrade.brokers import BrokerFactory
-from mousatrade.backtesting.backtesting import BacktestingEngine
-from mousatrade.persistence.models import AnalysisResult
+# Import Mousa core modules
+from mousatrade.core.trader import MousaTrader
+from mousatrade.core.config import Config
+from mousatrade.core.logger import setup_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Import new multi-market modules
+from mousatrade.markets import MarketRegistry, BinanceMarket, RobinhoodMarket, ForexMarket
+from mousatrade.markets import StockAnalyzer, CryptoAnalyzer, CorrelationTracker
+from mousatrade.resiliency import resilient_trade_execution, ErrorHandler, get_config
 
-class MousaTradeAdvisor:
-    """کلاس اصلی مشاور MousaTrade"""
+class EnhancedMousaTrader:
+    """
+    Enhanced version of MousaTrader with multi-market support
+    """
     
-    def __init__(self, config: Dict = None):
-        self.config = config or {}
+    def __init__(self, config_path: str = "config.json"):
+        # Load original Mousa configuration
+        self.config = Config(config_path)
         
-        # Initialize core components
-        self.data_provider = DataProvider()
-        self.technical_analyzer = TechnicalAnalyzer()
-        self.fundamental_analyzer = FundamentalAnalyzer()
-        self.sentiment_analyzer = SentimentAnalyzer()
-        self.position_advisor = PositionAdvisor()
-        self.strategy_advisor = StrategyAdvisor()
-        self.backtesting_engine = BacktestingEngine()
-        self.broker_factory = BrokerFactory()
+        # Initialize original Mousa trader
+        self.original_trader = MousaTrader(config_path)
         
-        self.current_broker = None
-        self.analysis_history = []
+        # Initialize multi-market system
+        self.market_registry = MarketRegistry()
+        self.error_handler = ErrorHandler()
+        self.resiliency_config = get_config("production")
         
-        logger.info("🎯 MousaTrade Advisor راه‌اندازی شد")
-        logger.info("📊 شامل تمام ابزارهای تحلیل FreqTrade + تحلیل فاندامنتال")
+        # Initialize analyzers
+        self.stock_analyzer = StockAnalyzer()
+        self.crypto_analyzer = CryptoAnalyzer()
+        self.correlation_tracker = CorrelationTracker()
+        
+        # Trading state
+        self.is_running = False
+        self.active_strategies = {}
     
-    def set_broker(self, broker_name: str, api_key: str = None, secret: str = None) -> bool:
-        """تنظیم بروکر برای دریافت داده‌های بازار"""
+    def setup_markets(self):
+        """Setup and connect to multiple markets"""
         try:
-            self.current_broker = self.broker_factory.create_broker(
-                broker_name, api_key, secret
-            )
-            logger.info(f"✅ بروکر {broker_name} تنظیم شد")
+            print("🚀 Setting up multi-market trading system...")
+            
+            # Initialize markets based on configuration
+            if self.config.get('exchanges.binance.enabled', False):
+                binance = BinanceMarket(
+                    api_key=self.config.get('exchanges.binance.api_key'),
+                    secret=self.config.get('exchanges.binance.api_secret')
+                )
+                self.market_registry.register_market("binance", binance)
+            
+            if self.config.get('exchanges.robinhood.enabled', False):
+                robinhood = RobinhoodMarket(
+                    username=self.config.get('exchanges.robinhood.username'),
+                    password=self.config.get('exchanges.robinhood.password')
+                )
+                self.market_registry.register_market("robinhood", robinhood)
+            
+            if self.config.get('exchanges.forex.enabled', False):
+                forex = ForexMarket(
+                    broker=self.config.get('exchanges.forex.broker', 'oanda'),
+                    api_key=self.config.get('exchanges.forex.api_key')
+                )
+                self.market_registry.register_market("forex", forex)
+            
+            # Connect to all registered markets
+            connection_results = self.market_registry.connect_all()
+            print("✅ Market connections established:", connection_results)
+            
             return True
+            
         except Exception as e:
-            logger.error(f"❌ خطا در تنظیم بروکر {broker_name}: {e}")
+            self.error_handler.handle_trading_error(e, {"context": "market_setup"})
             return False
     
-    def get_comprehensive_analysis(self, symbol: str, timeframe: str = "1h") -> Dict:
-        """آنالیز کامل برای یک نماد"""
-        if not self.current_broker:
-            return {"error": "لطفاً ابتدا بروکر را تنظیم کنید"}
+    async def start_trading(self):
+        """Start the enhanced trading system"""
+        if self.is_running:
+            print("⚠️ Trading system is already running")
+            return
         
-        try:
-            # دریافت داده‌های تاریخی
-            historical_data = self.current_broker.get_historical_data(
-                symbol, timeframe, days=30
-            )
-            
-            # تحلیل تکنیکال پیشرفته
-            technical_analysis = self.technical_analyzer.comprehensive_analysis(
-                historical_data
-            )
-            
-            # تحلیل فاندامنتال
-            fundamental_analysis = self.fundamental_analyzer.analyze(symbol)
-            
-            # تحلیل احساسات
-            sentiment_analysis = self.sentiment_analyzer.analyze(symbol)
-            
-            # دریافت پیشنهاد پوزیشن
-            position_advice = self.position_advisor.get_position_advice(
-                symbol, historical_data, technical_analysis, 
-                fundamental_analysis, sentiment_analysis
-            )
-            
-            # پیشنهاد استراتژی
-            strategy_advice = self.strategy_advisor.get_strategy_recommendation(
-                symbol, technical_analysis, position_advice
-            )
-            
-            # ساخت نتیجه نهایی
-            result = {
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "timestamp": datetime.now().isoformat(),
-                "position_advice": position_advice,
-                "technical_analysis": technical_analysis,
-                "fundamental_analysis": fundamental_analysis,
-                "sentiment_analysis": sentiment_analysis,
-                "strategy_recommendation": strategy_advice,
-                "risk_assessment": self._calculate_risk_assessment(
-                    position_advice, technical_analysis
-                )
-            }
-            
-            # ذخیره در تاریخچه
-            self._save_analysis_result(result)
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"خطا در تحلیل {symbol}: {e}")
-            return {"error": f"خطا در تحلیل: {str(e)}"}
-    
-    def backtest_strategy(self, symbol: str, strategy_name: str, 
-                         timeframe: str = "1h", days: int = 90) -> Dict:
-        """بک‌تست استراتژی روی داده‌های تاریخی"""
-        try:
-            historical_data = self.current_broker.get_historical_data(
-                symbol, timeframe, days=days
-            )
-            
-            backtest_result = self.backtesting_engine.run_backtest(
-                strategy_name, historical_data, symbol
-            )
-            
-            return backtest_result
-            
-        except Exception as e:
-            logger.error(f"خطا در بک‌تست {symbol}: {e}")
-            return {"error": f"خطا در بک‌تست: {str(e)}"}
-    
-    def get_market_overview(self, symbols: List[str]) -> Dict:
-        """بررسی کلی بازار برای چند نماد"""
-        overview = {}
+        print("🎯 Starting Enhanced Mousa Trading System...")
         
-        for symbol in symbols:
+        # Setup markets
+        if not self.setup_markets():
+            print("❌ Failed to setup markets")
+            return
+        
+        self.is_running = True
+        
+        # Start original Mousa strategies
+        await self.original_trader.start()
+        
+        # Start multi-market monitoring
+        asyncio.create_task(self.multi_market_monitor())
+        
+        # Start correlation analysis
+        asyncio.create_task(self.correlation_analysis_loop())
+        
+        print("✅ Enhanced Mousa Trading System started successfully")
+    
+    async def stop_trading(self):
+        """Stop the trading system"""
+        if not self.is_running:
+            return
+        
+        print("🛑 Stopping Enhanced Mousa Trading System...")
+        
+        self.is_running = False
+        
+        # Stop original Mousa trader
+        await self.original_trader.stop()
+        
+        # Disconnect from all markets
+        self.market_registry.disconnect_all()
+        
+        print("✅ Enhanced Mousa Trading System stopped")
+    
+    async def multi_market_monitor(self):
+        """Monitor multiple markets for opportunities"""
+        while self.is_running:
             try:
-                analysis = self.get_comprehensive_analysis(symbol)
-                overview[symbol] = {
-                    "position": analysis["position_advice"]["position_type"],
-                    "confidence": analysis["position_advice"]["confidence"],
-                    "trend": analysis["technical_analysis"]["trend"],
-                    "risk": analysis["risk_assessment"]["level"]
-                }
+                await self.check_arbitrage_opportunities()
+                await self.check_market_correlations()
+                await self.update_portfolio_analysis()
+                
+                # Sleep for 30 seconds
+                await asyncio.sleep(30)
+                
             except Exception as e:
-                overview[symbol] = {"error": str(e)}
-        
-        return overview
+                self.error_handler.handle_trading_error(e, {"context": "market_monitor"})
+                await asyncio.sleep(60)  # Wait longer on error
     
-    def _calculate_risk_assessment(self, position_advice: Dict, 
-                                 technical_analysis: Dict) -> Dict:
-        """محاسبه سطح ریسک"""
-        confidence = position_advice.get("confidence", 0)
-        volatility = technical_analysis.get("volatility", 0)
-        trend_strength = technical_analysis.get("trend_strength", 0)
-        
-        # محاسبه امتیاز ریسک
-        risk_score = (1 - confidence/100) * 0.6 + volatility * 0.4
-        
-        if risk_score < 0.3:
-            level = "کم"
-            color = "green"
-        elif risk_score < 0.6:
-            level = "متوسط"
-            color = "orange"
-        else:
-            level = "بالا"
-            color = "red"
-        
-        return {
-            "level": level,
-            "score": round(risk_score, 2),
-            "color": color,
-            "factors": {
-                "confidence_impact": round(1 - confidence/100, 2),
-                "volatility_impact": round(volatility, 2)
-            }
+    async def check_arbitrage_opportunities(self):
+        """Check for arbitrage opportunities across markets"""
+        try:
+            # Major symbols to check for arbitrage
+            symbols = ['BTC/USDT', 'ETH/USDT', 'AAPL', 'SPY']
+            
+            for symbol in symbols:
+                best_buy = self.market_registry.get_best_price(symbol, 'buy')
+                best_sell = self.market_registry.get_best_price(symbol, 'sell')
+                
+                if best_buy['price'] and best_sell['price']:
+                    spread = best_sell['price'] - best_buy['price']
+                    spread_percent = (spread / best_buy['price']) * 100
+                    
+                    if spread_percent > 0.5:  # 0.5% threshold
+                        print(f"💰 Arbitrage Opportunity: {symbol}")
+                        print(f"   Buy from: {best_buy['market']} @ {best_buy['price']}")
+                        print(f"   Sell to: {best_sell['market']} @ {best_sell['price']}")
+                        print(f"   Spread: {spread_percent:.2f}%")
+                        
+        except Exception as e:
+            self.error_handler.handle_trading_error(e, {"context": "arbitrage_check"})
+    
+    async def correlation_analysis_loop(self):
+        """Continuous correlation analysis"""
+        while self.is_running:
+            try:
+                # Update price data for correlation tracking
+                symbols = ['BTC/USDT', 'ETH/USDT', 'AAPL', 'SPY', 'EUR/USD']
+                
+                for symbol in symbols:
+                    for market_name in self.market_registry.get_connected_markets():
+                        market = self.market_registry.get_market(market_name)
+                        if market and symbol in market.get_symbols():
+                            ohlcv = market.get_ohlcv(symbol, '1d', 30)
+                            if not ohlcv.empty:
+                                self.correlation_tracker.update_prices(symbol, ohlcv['close'])
+                
+                # Calculate and log correlations
+                corr_matrix = self.correlation_tracker.calculate_correlation_matrix()
+                if not corr_matrix.empty:
+                    high_corr = self.correlation_tracker.find_highly_correlated_pairs(0.7)
+                    if high_corr:
+                        print("🔗 Highly Correlated Pairs:")
+                        for pair in high_corr[:5]:  # Top 5
+                            print(f"   {pair[0]} - {pair[1]}: {pair[2]:.3f}")
+                
+                await asyncio.sleep(300)  # 5 minutes
+                
+            except Exception as e:
+                self.error_handler.handle_trading_error(e, {"context": "correlation_analysis"})
+                await asyncio.sleep(60)
+    
+    async def update_portfolio_analysis(self):
+        """Update portfolio analysis across all markets"""
+        try:
+            balances = self.market_registry.get_balances()
+            total_value = 0
+            portfolio = {}
+            
+            # Calculate total portfolio value
+            for market_name, market_balances in balances.items():
+                for currency, amount in market_balances.items():
+                    if currency not in portfolio:
+                        portfolio[currency] = 0
+                    portfolio[currency] += amount
+            
+            print("📊 Multi-Market Portfolio Summary:")
+            for currency, amount in portfolio.items():
+                if amount > 0:
+                    print(f"   {currency}: {amount:,.2f}")
+            
+        except Exception as e:
+            self.error_handler.handle_trading_error(e, {"context": "portfolio_analysis"})
+    
+    @resilient_trade_execution(exchange_name="multi_market")
+    def execute_smart_trade(self, symbol: str, action: str, amount: float, 
+                           strategy: str = "best_price"):
+        """
+        Execute trade using smart order routing across multiple markets
+        """
+        try:
+            if strategy == "best_price":
+                # Find best market for this trade
+                best_market = self.market_registry.get_best_price(symbol, action)
+                
+                if best_market['market'] and best_market['price']:
+                    market = self.market_registry.get_market(best_market['market'])
+                    if market:
+                        result = market.place_order(symbol, 'MARKET', action, amount)
+                        
+                        print(f"🎯 Smart Trade Executed:")
+                        print(f"   Symbol: {symbol}")
+                        print(f"   Action: {action}")
+                        print(f"   Amount: {amount}")
+                        print(f"   Market: {best_market['market']}")
+                        print(f"   Price: {best_market['price']}")
+                        
+                        return result
+            
+            # Fallback: use original Mousa trader
+            return self.original_trader.execute_trade(symbol, action, amount)
+            
+        except Exception as e:
+            self.error_handler.handle_trading_error(e, {
+                "context": "smart_trade",
+                "symbol": symbol,
+                "action": action,
+                "amount": amount
+            })
+            raise
+    
+    def get_market_health(self):
+        """Get health status of all connected markets"""
+        connected_markets = self.market_registry.get_connected_markets()
+        health_status = {
+            'connected_markets': connected_markets,
+            'total_markets': len(self.market_registry.markets),
+            'balances': self.market_registry.get_balances()
         }
-    
-    def _save_analysis_result(self, result: Dict):
-        """ذخیره نتیجه تحلیل در تاریخچه"""
-        analysis_record = AnalysisResult(
-            symbol=result["symbol"],
-            timeframe=result["timeframe"],
-            position_type=result["position_advice"]["position_type"],
-            confidence=result["position_advice"]["confidence"],
-            technical_data=result["technical_analysis"],
-            timestamp=datetime.now()
-        )
         
-        self.analysis_history.append(analysis_record)
+        return health_status
+
+async def main():
+    """Main entry point for Enhanced Mousa Trading System"""
+    
+    # Setup logging
+    setup_logging()
+    logging.info("Starting Enhanced Mousa Trading System")
+    
+    # Initialize enhanced trader
+    trader = EnhancedMousaTrader("config.json")
+    
+    try:
+        # Start trading
+        await trader.start_trading()
         
-        # نگه‌داری فقط 100 تحلیل اخیر
-        if len(self.analysis_history) > 100:
-            self.analysis_history.pop(0)
-
-# ایجاد نمونه اصلی
-mousatrade_advisor = MousaTradeAdvisor()
-
-# راه‌اندازی سرور وب
-app = Flask(__name__)
-app.secret_key = 'mousatrade-secret-key-2024'
-
-@app.route('/')
-def index():
-    """صفحه اصلی"""
-    return render_template('index.html')
-
-@app.route('/api/set_broker', methods=['POST'])
-def api_set_broker():
-    """تنظیم بروکر از طریق API"""
-    data = request.get_json()
-    broker_name = data.get('broker')
-    
-    success = mousatrade_advisor.set_broker(broker_name)
-    
-    if success:
-        session['broker'] = broker_name
-        return jsonify({
-            "status": "success",
-            "message": f"بروکر {broker_name} با موفقیت تنظیم شد"
-        })
-    else:
-        return jsonify({
-            "status": "error",
-            "message": f"خطا در تنظیم بروکر {broker_name}"
-        }), 400
-
-@app.route('/api/analyze/<symbol>')
-def api_analyze(symbol):
-    """دریافت تحلیل کامل برای یک نماد"""
-    timeframe = request.args.get('timeframe', '1h')
-    
-    analysis = mousatrade_advisor.get_comprehensive_analysis(symbol, timeframe)
-    
-    return jsonify(analysis)
-
-@app.route('/api/backtest/<symbol>')
-def api_backtest(symbol):
-    """بک‌تست استراتژی"""
-    strategy = request.args.get('strategy', 'default')
-    timeframe = request.args.get('timeframe', '1h')
-    days = int(request.args.get('days', '90'))
-    
-    result = mousatrade_advisor.backtest_strategy(symbol, strategy, timeframe, days)
-    
-    return jsonify(result)
-
-@app.route('/api/market-overview')
-def api_market_overview():
-    """بررسی کلی بازار"""
-    symbols_param = request.args.get('symbols', 'BTC/USDT,ETH/USDT')
-    symbols = [s.strip() for s in symbols_param.split(',')]
-    
-    overview = mousatrade_advisor.get_market_overview(symbols)
-    
-    return jsonify(overview)
+        # Keep the system running
+        print("\n📍 Enhanced Mousa is running. Press Ctrl+C to stop.")
+        
+        # Example: Execute a sample trade after 10 seconds
+        await asyncio.sleep(10)
+        
+        # Sample smart trade (optional - for testing)
+        if trader.config.get('trading.demo_mode', True):
+            print("\n🧪 Executing demo trade...")
+            try:
+                result = trader.execute_smart_trade("BTC/USDT", "buy", 0.001)
+                print(f"Demo trade result: {result}")
+            except Exception as e:
+                print(f"Demo trade failed: {e}")
+        
+        # Wait indefinitely (or until stop signal)
+        while trader.is_running:
+            await asyncio.sleep(1)
+            
+    except KeyboardInterrupt:
+        print("\n🛑 Received stop signal...")
+    except Exception as e:
+        logging.error(f"System error: {e}")
+        trader.error_handler.handle_trading_error(e, {"context": "main_loop"})
+    finally:
+        # Clean shutdown
+        await trader.stop_trading()
+        logging.info("Enhanced Mousa Trading System stopped")
 
 if __name__ == "__main__":
-    logger.info("🚀 در حال راه‌اندازی سرور MousaTrade...")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Run the enhanced trading system
+    asyncio.run(main())
